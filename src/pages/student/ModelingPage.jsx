@@ -1,0 +1,382 @@
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import Button from "../../components/Button.jsx";
+import Layout from "../../components/Layout.jsx";
+import { SkeletonList } from "../../components/Loading/Skeleton.jsx";
+import { useAuth } from "../../contexts/AuthContext.jsx";
+import {
+  appendTrainingData,
+  clearTrainingData,
+  getAlgorithmModel,
+  getStudentEvaluation,
+  listChecklists,
+  listTeacherMediaWithTeacherEvals,
+  replaceFeedbackCards,
+  saveAlgorithmModel,
+  saveStudentEvaluation,
+} from "../../services/firestore.js";
+import {
+  DIMENSION_INFO,
+  aggregateToDimensions,
+  bayesianActive,
+  bayesianUpdate,
+  computeGap,
+  convergenceScore,
+  generateFeedbackCards,
+  initialWeights,
+  isColdStart,
+  learningRate,
+  teacherImplicitWeights,
+  weightsToArray,
+} from "../../utils/hpfm.js";
+
+export default function ModelingPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [checklists, setChecklists] = useState([]);
+  const [activeChecklistId, setActiveChecklistId] = useState(null);
+  const [media, setMedia] = useState([]);
+  const [scoresByMedia, setScoresByMedia] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [training, setTraining] = useState(false);
+  const [model, setModel] = useState(null);
+
+  const activeChecklist = useMemo(
+    () => checklists.find((c) => c.id === activeChecklistId) ?? null,
+    [checklists, activeChecklistId]
+  );
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const [cls, mediaItems, existingModel] = await Promise.all([
+        listChecklists(user.uid),
+        listTeacherMediaWithTeacherEvals(),
+        getAlgorithmModel(user.uid),
+      ]);
+      setChecklists(cls);
+      setMedia(mediaItems);
+      setModel(existingModel);
+      const initial =
+        existingModel?.checklistId && cls.find((c) => c.id === existingModel.checklistId)
+          ? existingModel.checklistId
+          : cls[0]?.id ?? null;
+      setActiveChecklistId(initial);
+      setLoading(false);
+    })();
+  }, [user]);
+
+  useEffect(() => {
+    if (!activeChecklistId || media.length === 0) return;
+    (async () => {
+      const next = {};
+      for (const m of media) {
+        const ev = await getStudentEvaluation(m.id, user.uid);
+        if (ev?.checklistId === activeChecklistId && ev?.items) {
+          next[m.id] = ev.items;
+        }
+      }
+      setScoresByMedia(next);
+    })();
+  }, [activeChecklistId, media, user]);
+
+  const setScore = (mediaId, idx, value) => {
+    setScoresByMedia((prev) => {
+      const cur = prev[mediaId] ? [...prev[mediaId]] : [];
+      cur[idx] = Number(value);
+      return { ...prev, [mediaId]: cur };
+    });
+  };
+
+  const evaluatedCount = useMemo(() => {
+    if (!activeChecklist) return 0;
+    return media.reduce((acc, m) => {
+      const arr = scoresByMedia[m.id];
+      if (!arr) return acc;
+      const filled = activeChecklist.items.every((_, idx) => Number.isFinite(arr[idx]));
+      return acc + (filled ? 1 : 0);
+    }, 0);
+  }, [media, scoresByMedia, activeChecklist]);
+
+  const teacherEvaluatedCount = useMemo(
+    () => media.filter((m) => m.teacherEvaluation?.dimensionScores).length,
+    [media]
+  );
+
+  const handleTrain = async () => {
+    if (!activeChecklist) return;
+    if (evaluatedCount === 0) {
+      alert("최소 1개 이상의 미디어를 평가해주세요.");
+      return;
+    }
+    if (!activeChecklist.items.every((it) => it.dimension)) {
+      alert(
+        "체크리스트의 모든 항목이 차원에 매핑되어 있어야 합니다. 체크리스트 페이지에서 한번 더 저장해주세요."
+      );
+      return;
+    }
+    setTraining(true);
+    try {
+      const pairs = [];
+      for (const m of media) {
+        const arr = scoresByMedia[m.id];
+        if (!arr || arr.length === 0) continue;
+        const studentDims = aggregateToDimensions(activeChecklist.items, arr);
+        await saveStudentEvaluation(m.id, user.uid, {
+          items: arr,
+          checklistId: activeChecklistId,
+          dimensionScores: studentDims,
+        });
+        const teacherDims = m.teacherEvaluation?.dimensionScores;
+        if (teacherDims) pairs.push({ studentDims, teacherDims, mediaId: m.id });
+      }
+
+      const totalCount = (model?.trainingDataCount ?? 0) + pairs.length;
+      let weights = model?.weights && Object.keys(model.weights).length
+        ? { ...model.weights }
+        : initialWeights();
+
+      if (!isColdStart(totalCount) && pairs.length > 0) {
+        let count = model?.trainingDataCount ?? 0;
+        for (const p of pairs) {
+          const gap = computeGap(p.studentDims, p.teacherDims);
+          weights = bayesianUpdate(
+            weights,
+            { dimensionScores: p.studentDims, gap },
+            { trainingDataCount: count }
+          );
+          count += 1;
+        }
+      }
+
+      const teacherDimsList = media
+        .map((m) => m.teacherEvaluation?.dimensionScores)
+        .filter(Boolean);
+      const teacherImplicit = teacherImplicitWeights(teacherDimsList);
+      const conv = convergenceScore(weights, teacherImplicit);
+
+      await clearTrainingData(user.uid);
+      const gapHistory = [];
+      for (const p of pairs) {
+        const gap = computeGap(p.studentDims, p.teacherDims);
+        gapHistory.push(gap);
+        await appendTrainingData(user.uid, `media_${p.mediaId}`, {
+          mediaId: p.mediaId,
+          checklistId: activeChecklistId,
+          studentDimensionScores: p.studentDims,
+          teacherDimensionScores: p.teacherDims,
+          gap,
+          source: "modeling",
+        });
+      }
+      const cards = generateFeedbackCards(gapHistory);
+      await replaceFeedbackCards(user.uid, cards);
+
+      const trained = {
+        weights,
+        checklistId: activeChecklistId,
+        trainingDataCount: totalCount,
+        convergenceScore: conv,
+        teacherImplicitWeights: teacherImplicit,
+        learningRate: learningRate(totalCount),
+      };
+      await saveAlgorithmModel(user.uid, trained);
+      setModel(trained);
+    } catch (e) {
+      console.error(e);
+      alert(`학습 중 오류: ${e.message}`);
+    } finally {
+      setTraining(false);
+    }
+  };
+
+  if (loading) return <Layout title="모델링"><SkeletonList count={3} /></Layout>;
+
+  if (!checklists.length) {
+    return (
+      <Layout title="모델링" subtitle="체크리스트를 먼저 만들어야 합니다">
+        <div className="card text-center">
+          <p className="text-slate-600">체크리스트가 없습니다.</p>
+          <Button variant="primary" className="mt-3" onClick={() => navigate("/student/checklist")}>
+            체크리스트 만들러 가기
+          </Button>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (media.length === 0) {
+    return (
+      <Layout title="모델링" subtitle="선생님이 등록한 미디어를 평가합니다">
+        <div className="card text-center">
+          <p className="text-slate-600">아직 등록된 미디어 자료가 없습니다.</p>
+          <Button variant="secondary" className="mt-3" onClick={() => navigate("/student")}>← 대시보드</Button>
+        </div>
+      </Layout>
+    );
+  }
+
+  const tCount = model?.trainingDataCount ?? 0;
+  const phaseLabel = isColdStart(tCount)
+    ? "Cold Start (균등 가중치)"
+    : bayesianActive(tCount)
+    ? "Bayesian 갱신 활성"
+    : "워밍업 (전이 단계)";
+
+  return (
+    <Layout
+      title="알고리즘 모델링 (HPFM)"
+      subtitle="학생 vs 교사 차원별 격차로 가중치를 베이지안 점진 갱신합니다"
+      actions={
+        <>
+          <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>
+          <Button variant="primary" onClick={handleTrain} loading={training}>
+            저장하고 모델 학습
+          </Button>
+        </>
+      }
+    >
+      <div className="card mb-4">
+        <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+          <div>
+            <label className="label">사용할 체크리스트</label>
+            <select
+              className="input"
+              value={activeChecklistId ?? ""}
+              onChange={(e) => setActiveChecklistId(e.target.value)}
+            >
+              {checklists.map((cl) => (
+                <option key={cl.id} value={cl.id}>{cl.checklistName} (항목 {cl.items?.length ?? 0}개)</option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-500">
+              평가 완료 미디어 {evaluatedCount} / {media.length} · 교사 차원 점수 보유 {teacherEvaluatedCount}건
+            </p>
+          </div>
+          <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
+            <p className="text-xs text-slate-500">학습 단계</p>
+            <p className="text-sm font-bold text-slate-800">{phaseLabel}</p>
+            <p className="mt-1 text-xs text-slate-500">η = {learningRate(tCount).toFixed(3)}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {media.map((m) => (
+          <MediaEvaluator
+            key={m.id}
+            media={m}
+            checklist={activeChecklist}
+            scores={scoresByMedia[m.id] ?? []}
+            onChange={(idx, v) => setScore(m.id, idx, v)}
+          />
+        ))}
+      </div>
+
+      {model?.weights && (
+        <div className="card mt-6">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-slate-900">학습된 가중치 (μ ± σ)</h3>
+            {Number.isFinite(model.convergenceScore) && (
+              <span className="badge bg-brand-50 text-brand-700">
+                수렴도 {(model.convergenceScore * 100).toFixed(0)}%
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            낮은 σ = 안정화된 차원 · μ 합 = 1
+          </p>
+          <div className="mt-3 space-y-2">
+            {weightsToArray(model.weights).map((w) => (
+              <div key={w.code} className="flex items-center gap-3">
+                <span className="w-44 truncate text-sm text-slate-700">
+                  {w.code} · {w.name}
+                </span>
+                <div className="flex-1">
+                  <div className="h-2 w-full rounded-full bg-slate-100">
+                    <div
+                      className="h-2 rounded-full bg-brand-500"
+                      style={{ width: `${w.mu * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <span className="w-28 text-right text-sm font-semibold text-brand-700">
+                  {(w.mu * 100).toFixed(1)}%{" "}
+                  <span className="text-xs text-slate-400">±{(w.sigma * 100).toFixed(1)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button variant="primary" onClick={() => navigate("/student/factcheck")}>
+              팩트체크 실행하기 →
+            </Button>
+          </div>
+        </div>
+      )}
+    </Layout>
+  );
+}
+
+function MediaEvaluator({ media, checklist, scores, onChange }) {
+  if (!checklist) return null;
+  const hasTeacher = !!media.teacherEvaluation?.dimensionScores;
+  return (
+    <div className="card">
+      <div className="flex items-start gap-4">
+        {media.thumbnailUrl ? (
+          <img src={media.thumbnailUrl} alt="" className="h-24 w-32 rounded-xl object-cover" />
+        ) : (
+          <div className="grid h-24 w-32 place-items-center rounded-xl bg-slate-100 text-xs text-slate-400">
+            No Thumb
+          </div>
+        )}
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h4 className="text-base font-semibold text-slate-900">{media.title}</h4>
+            {hasTeacher ? (
+              <span className="badge bg-emerald-50 text-emerald-700">교사 차원 점수 ✓</span>
+            ) : (
+              <span className="badge bg-amber-50 text-amber-700">교사 평가 미작성</span>
+            )}
+          </div>
+          <p className="mt-1 line-clamp-2 text-sm text-slate-600">{media.content}</p>
+          {media.link && (
+            <a href={media.link} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-brand-700 underline">
+              원본 ↗
+            </a>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {checklist.items.map((it, idx) => (
+          <div key={idx} className="grid items-center gap-3 sm:grid-cols-[1fr_240px]">
+            <div>
+              <p className="text-sm text-slate-700">{idx + 1}. {it.question}</p>
+              {it.dimension && DIMENSION_INFO[it.dimension] && (
+                <span className="mt-0.5 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">
+                  {it.dimension} · {DIMENSION_INFO[it.dimension].name}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={1}
+                max={5}
+                step={1}
+                value={scores[idx] ?? 3}
+                onChange={(e) => onChange(idx, e.target.value)}
+                className="flex-1 accent-brand-600"
+              />
+              <span className="w-10 text-right text-sm font-bold text-brand-700">
+                {scores[idx] ?? "-"}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
