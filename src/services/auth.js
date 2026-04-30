@@ -39,8 +39,9 @@ export async function ensureUserProfile(user, role) {
   }
 
   const existing = snap.data();
+  // role은 최초 등록 시 1회 결정되면 이후 변경하지 않는다.
+  // (다른 디바이스/경로 재로그인 시 우발적 강등·권한상승 방지)
   const update = { ...baseData };
-  if (role && existing.role !== role) update.role = role;
   await setDoc(ref, update, { merge: true });
   return { ...existing, ...update };
 }
