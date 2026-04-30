@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+
+<html lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-primary": "#ffffff",
+                    "surface-container": "#eeedf3",
+                    "on-background": "#1a1b1f",
+                    "primary-fixed-dim": "#adc6ff",
+                    "outline-variant": "#c1c6d7",
+                    "surface-container-low": "#f4f3f8",
+                    "secondary": "#006687",
+                    "tertiary-fixed": "#72fe88",
+                    "on-primary-container": "#fefcff",
+                    "primary": "#0058bc",
+                    "surface-dim": "#dad9df",
+                    "outline": "#717786",
+                    "surface": "#faf9fe",
+                    "background": "#faf9fe",
+                    "on-tertiary-fixed-variant": "#00531c",
+                    "on-secondary": "#ffffff",
+                    "inverse-on-surface": "#f1f0f5",
+                    "on-secondary-fixed-variant": "#004d67",
+                    "on-tertiary-container": "#f7fff2",
+                    "on-surface": "#1a1b1f",
+                    "on-primary-fixed": "#001a41",
+                    "on-secondary-container": "#005572",
+                    "surface-variant": "#e3e2e7",
+                    "tertiary-container": "#008733",
+                    "secondary-fixed-dim": "#74d1ff",
+                    "on-secondary-fixed": "#001e2b",
+                    "surface-container-highest": "#e3e2e7",
+                    "inverse-surface": "#2f3034",
+                    "surface-bright": "#faf9fe",
+                    "on-surface-variant": "#414755",
+                    "on-tertiary": "#ffffff",
+                    "error": "#ba1a1a",
+                    "on-error-container": "#93000a",
+                    "on-primary-fixed-variant": "#004493",
+                    "surface-container-high": "#e9e7ed",
+                    "error-container": "#ffdad6",
+                    "on-tertiary-fixed": "#002107",
+                    "primary-fixed": "#d8e2ff",
+                    "secondary-fixed": "#c1e8ff",
+                    "tertiary-fixed-dim": "#53e16f",
+                    "secondary-container": "#60cdff",
+                    "surface-container-lowest": "#ffffff",
+                    "surface-tint": "#005bc1",
+                    "on-error": "#ffffff",
+                    "inverse-primary": "#adc6ff",
+                    "primary-container": "#0070eb",
+                    "tertiary": "#006b27"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "md": "24px",
+                    "gutter": "20px",
+                    "container-max": "1200px",
+                    "xl": "64px",
+                    "base": "4px",
+                    "sm": "16px",
+                    "xs": "8px",
+                    "lg": "40px"
+            },
+            "fontFamily": {
+                    "body-base": ["Plus Jakarta Sans"],
+                    "label-bold": ["Plus Jakarta Sans"],
+                    "title-sm": ["Plus Jakarta Sans"],
+                    "display-lg": ["Plus Jakarta Sans"],
+                    "body-sm": ["Plus Jakarta Sans"],
+                    "headline-md": ["Plus Jakarta Sans"]
+            },
+            "fontSize": {
+                    "body-base": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                    "label-bold": ["12px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "700"}],
+                    "title-sm": ["20px", {"lineHeight": "1.4", "fontWeight": "600"}],
+                    "display-lg": ["40px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "800"}],
+                    "body-sm": ["14px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                    "headline-md": ["28px", {"lineHeight": "1.3", "fontWeight": "700"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: linear-gradient(180deg, #E6F0FF 0%, #FFFFFF 100%);
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center p-md">
+<!-- Login Container -->
+<main class="w-full max-w-[480px] z-10">
+<!-- Brand identity section removed TopAppBar/SideNav as per Transactional Flow rule -->
+<div class="bg-surface-container-lowest rounded-[32px] p-xl shadow-[0_20px_50px_rgba(0,88,188,0.08)] border border-white/60 backdrop-blur-sm">
+<!-- Logo Section -->
+<div class="flex flex-col items-center mb-lg">
+<div class="w-20 h-20 bg-primary rounded-full flex items-center justify-center shadow-lg shadow-primary/20 mb-sm scale-100 hover:scale-105 transition-transform duration-300">
+<span class="material-symbols-outlined text-on-primary text-[44px]" data-icon="verified" data-weight="fill" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+<h1 class="font-headline-md text-headline-md text-primary mb-xs tracking-tight">
+                    미디어 리터러시 · 팩트체크
+                </h1>
+<p class="font-body-base text-body-base text-on-surface-variant text-center opacity-80">
+                    나만의 체크리스트로 미디어를 평가해보세요
+                </p>
+</div>
+<!-- Login Illustration (Contextual for students) -->
+<div class="relative w-full aspect-video rounded-2xl overflow-hidden mb-lg">
+<img alt="Students collaborating" class="w-full h-full object-cover" data-alt="A group of diverse high school students sitting together in a modern, sun-drenched classroom, engaged in a collaborative learning session with digital tablets. The environment is bright and encouraging with soft blue and white decorative accents, emphasizing a clean and academic atmosphere. The photography style is high-key with soft natural lighting, creating a sense of clarity and modern digital education." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDleL-XHVCu2vqLEXoC5yQFMZwVgqhfSabqYJabdxHgPf8oi0Rdmlj0ObLVTwnoUy8zs6V-ulu-JRpPz8a7_xFu7nmDdb4SQjqmXICZiadW864KaMYRtXmQ4Y508TGvHMuRJbbOI7bjuN4P79QvZ98wYMsFtN-_hprJOZQi1gQ3fFZpnnOo4qLb-EOwqd1gtJL1FodgBeVxkD_5ZLDreXVxqw-GUj58oltjjVDNxJdfy25mMz4BO3QzsJtBdkvML-s41mBgRMh5VbmQ"/>
+<div class="absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent"></div>
+</div>
+<!-- Action Buttons Section -->
+<div class="flex flex-col gap-sm">
+<!-- Primary Action: Google Login -->
+<button class="w-full h-14 bg-primary hover:bg-primary-container text-on-primary rounded-2xl font-title-sm text-title-sm flex items-center justify-center gap-sm transition-all duration-300 active:scale-95 shadow-md shadow-primary/10">
+<svg class="w-6 h-6" viewbox="0 0 24 24">
+<path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="currentColor"></path>
+<path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="currentColor"></path>
+<path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="currentColor"></path>
+<path d="M12 5.38c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="currentColor"></path>
+</svg>
+<span>학생으로 시작 (Google 로그인)</span>
+</button>
+<!-- Secondary Action: Teacher Login -->
+<button class="w-full h-14 bg-surface-container-lowest border-2 border-primary/20 hover:border-primary text-primary rounded-2xl font-title-sm text-title-sm flex items-center justify-center gap-sm transition-all duration-300 active:scale-95">
+<span class="material-symbols-outlined" data-icon="school">school</span>
+<span>교사로 시작</span>
+</button>
+</div>
+<!-- Footer Meta -->
+<div class="mt-xl pt-sm border-t border-surface-variant flex justify-center items-center gap-gutter">
+<a class="font-label-bold text-label-bold text-on-surface-variant hover:text-primary transition-colors" href="#">이용약관</a>
+<span class="w-1 h-1 bg-surface-variant rounded-full"></span>
+<a class="font-label-bold text-label-bold text-on-surface-variant hover:text-primary transition-colors" href="#">개인정보처리방침</a>
+<span class="w-1 h-1 bg-surface-variant rounded-full"></span>
+<a class="font-label-bold text-label-bold text-on-surface-variant hover:text-primary transition-colors" href="#">도움말</a>
+</div>
+</div>
+<!-- Supportive Text -->
+<div class="mt-sm text-center px-md">
+<p class="font-body-sm text-body-sm text-on-surface-variant/60">
+                올바른 미디어 소비 습관을 위한 첫 걸음을 함께하세요.
+            </p>
+</div>
+</main>
+<!-- Decorative Elements (Subtle Blobs) -->
+<div class="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-100/50 rounded-full blur-[120px] -z-10"></div>
+<div class="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-50 rounded-full blur-[120px] -z-10"></div>
+</body></html>

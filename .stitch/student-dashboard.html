@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+
+<html class="light" lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "tertiary-fixed-dim": "#53e16f",
+                    "surface-bright": "#faf9fe",
+                    "on-primary-container": "#fefcff",
+                    "on-secondary": "#ffffff",
+                    "surface-container": "#eeedf3",
+                    "on-tertiary-fixed-variant": "#00531c",
+                    "on-tertiary-fixed": "#002107",
+                    "on-secondary-fixed": "#001e2b",
+                    "on-primary": "#ffffff",
+                    "secondary": "#006687",
+                    "on-error": "#ffffff",
+                    "on-background": "#1a1b1f",
+                    "surface-container-high": "#e9e7ed",
+                    "inverse-primary": "#adc6ff",
+                    "primary-fixed": "#d8e2ff",
+                    "tertiary-container": "#008733",
+                    "outline-variant": "#c1c6d7",
+                    "primary": "#0058bc",
+                    "on-tertiary": "#ffffff",
+                    "error": "#ba1a1a",
+                    "primary-fixed-dim": "#adc6ff",
+                    "surface-dim": "#dad9df",
+                    "secondary-fixed": "#c1e8ff",
+                    "secondary-fixed-dim": "#74d1ff",
+                    "background": "#faf9fe",
+                    "surface-container-lowest": "#ffffff",
+                    "surface": "#faf9fe",
+                    "surface-variant": "#e3e2e7",
+                    "on-primary-fixed-variant": "#004493",
+                    "on-surface": "#1a1b1f",
+                    "inverse-on-surface": "#f1f0f5",
+                    "surface-container-low": "#f4f3f8",
+                    "error-container": "#ffdad6",
+                    "tertiary": "#006b27",
+                    "inverse-surface": "#2f3034",
+                    "surface-container-highest": "#e3e2e7",
+                    "outline": "#717786",
+                    "on-error-container": "#93000a",
+                    "secondary-container": "#60cdff",
+                    "tertiary-fixed": "#72fe88",
+                    "on-tertiary-container": "#f7fff2",
+                    "on-surface-variant": "#414755",
+                    "on-secondary-fixed-variant": "#004d67",
+                    "on-primary-fixed": "#001a41",
+                    "surface-tint": "#005bc1",
+                    "primary-container": "#0070eb",
+                    "on-secondary-container": "#005572"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "container-max": "1200px",
+                    "md": "24px",
+                    "sm": "16px",
+                    "lg": "40px",
+                    "xl": "64px",
+                    "gutter": "20px",
+                    "base": "4px",
+                    "xs": "8px"
+            },
+            "fontFamily": {
+                    "label-bold": ["Plus Jakarta Sans"],
+                    "display-lg": ["Plus Jakarta Sans"],
+                    "body-base": ["Plus Jakarta Sans"],
+                    "headline-md": ["Plus Jakarta Sans"],
+                    "title-sm": ["Plus Jakarta Sans"],
+                    "body-sm": ["Plus Jakarta Sans"]
+            }
+          }
+        }
+      }
+    </script>
+<style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .glass-nav { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    </style>
+</head>
+<body class="bg-surface selection:bg-primary-fixed-dim selection:text-on-primary-fixed">
+<!-- TopAppBar -->
+<header class="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md fixed top-0 z-50 w-full border-b border-slate-200/50 dark:border-slate-800/50 shadow-[0_4px_20px_rgba(0,122,255,0.15)] flex justify-between items-center px-6 py-4">
+<div class="flex items-center gap-4">
+<h1 class="text-lg font-extrabold text-slate-900 dark:text-white tracking-tight">미디어 리터러시 · 팩트체크 학습 플랫폼</h1>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-3 px-3 py-1.5 bg-blue-50/50 dark:bg-blue-900/20 rounded-full border border-blue-100 dark:border-blue-800 transition-all hover:bg-blue-50 dark:hover:bg-blue-900/30">
+<span class="text-sm font-semibold text-slate-700 dark:text-slate-200">학생 · 홍길동</span>
+<div class="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-white text-xs font-bold ring-2 ring-white dark:ring-slate-900">
+                    HG
+                </div>
+</div>
+<button class="flex items-center gap-2 text-slate-500 hover:text-error transition-colors font-medium text-sm">
+<span class="material-symbols-outlined text-xl">logout</span>
+                Logout
+            </button>
+</div>
+</header>
+<!-- SideNavBar -->
+<nav class="hidden lg:flex flex-col gap-2 p-4 h-screen fixed left-0 top-0 bg-slate-50/50 dark:bg-slate-950/50 backdrop-blur-xl w-64 border-r border-slate-200 dark:border-slate-800 z-40 pt-24">
+<div class="space-y-1">
+<a class="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-bold rounded-lg group transition-transform duration-200 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined" data-weight="fill" style="font-variation-settings: 'FILL' 1;">dashboard</span>
+<span class="text-sm">대시보드</span>
+</a>
+<a class="flex items-center gap-3 p-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg group transition-transform duration-200 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined">fact_check</span>
+<span class="text-sm">체크리스트</span>
+</a>
+<a class="flex items-center gap-3 p-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg group transition-transform duration-200 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined">psychology</span>
+<span class="text-sm">모델링</span>
+</a>
+<a class="flex items-center gap-3 p-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg group transition-transform duration-200 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="text-sm">팩트체크 기록</span>
+</a>
+</div>
+<div class="mt-auto p-4 bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800">
+<p class="text-xs text-slate-500 mb-2">학습 진행률</p>
+<div class="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 mb-2">
+<div class="bg-primary h-2 rounded-full w-[65%]"></div>
+</div>
+<p class="text-[10px] text-right font-bold text-primary">65% 완료</p>
+</div>
+</nav>
+<!-- Main Content Canvas -->
+<main class="lg:ml-64 pt-28 pb-24 px-6 md:px-12 max-w-[1200px] mx-auto min-h-screen">
+<div class="mb-10">
+<h2 class="font-display-lg text-display-lg text-slate-900 dark:text-white mb-2">학생 대시보드</h2>
+<p class="text-body-base text-on-surface-variant max-w-2xl">반가워요, 홍길동 학생! 오늘은 어떤 미디어를 분석해볼까요? 학습 단계를 차근차근 따라가 보세요.</p>
+</div>
+<!-- Stats Section (Bento Style) -->
+<section class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+<!-- Card 1 -->
+<div class="group p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-[0_4px_20px_rgba(0,122,255,0.05)] hover:shadow-[0_8px_30px_rgba(0,122,255,0.12)] transition-all hover:scale-[1.02] duration-300">
+<div class="flex items-center justify-between mb-4">
+<div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-2xl">checklist</span>
+</div>
+<span class="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-md">진행 중</span>
+</div>
+<h3 class="font-title-sm text-title-sm text-slate-900 dark:text-white mb-1">내 체크리스트</h3>
+<div class="flex items-baseline gap-1">
+<span class="text-4xl font-extrabold text-primary">2</span>
+<span class="text-lg font-semibold text-slate-500">개</span>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="group p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-[0_4px_20px_rgba(0,122,255,0.05)] hover:shadow-[0_8px_30px_rgba(0,122,255,0.12)] transition-all hover:scale-[1.02] duration-300">
+<div class="flex items-center justify-between mb-4">
+<div class="w-12 h-12 rounded-xl bg-purple-50 dark:bg-purple-900/30 flex items-center justify-center text-purple-600">
+<span class="material-symbols-outlined text-2xl">model_training</span>
+</div>
+<span class="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded-md">완료</span>
+</div>
+<h3 class="font-title-sm text-title-sm text-slate-900 dark:text-white mb-1">모델 학습 상태</h3>
+<div class="flex items-baseline gap-1">
+<span class="text-3xl font-extrabold text-purple-600">학습됨</span>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="group p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-[0_4px_20px_rgba(0,122,255,0.05)] hover:shadow-[0_8px_30px_rgba(0,122,255,0.12)] transition-all hover:scale-[1.02] duration-300">
+<div class="flex items-center justify-between mb-4">
+<div class="w-12 h-12 rounded-xl bg-orange-50 dark:bg-orange-900/30 flex items-center justify-center text-orange-600">
+<span class="material-symbols-outlined text-2xl">history_edu</span>
+</div>
+<span class="text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md">누적</span>
+</div>
+<h3 class="font-title-sm text-title-sm text-slate-900 dark:text-white mb-1">팩트체크 기록</h3>
+<div class="flex items-baseline gap-1">
+<span class="text-4xl font-extrabold text-orange-600">5</span>
+<span class="text-lg font-semibold text-slate-500">건</span>
+</div>
+</div>
+</section>
+<!-- Action Steps Section -->
+<section class="space-y-6">
+<h3 class="font-headline-md text-headline-md text-slate-900 dark:text-white mb-6">학습 가이드</h3>
+<!-- Step 1 Card -->
+<div class="relative overflow-hidden group bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-[0_8px_32px_rgba(0,0,0,0.04)] p-8 flex flex-col md:flex-row items-center gap-8 transition-all hover:border-blue-200">
+<div class="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity">
+<span class="material-symbols-outlined text-[120px]">format_list_bulleted</span>
+</div>
+<div class="flex-shrink-0 w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center text-primary font-black text-2xl">
+                    01
+                </div>
+<div class="flex-grow">
+<h4 class="font-title-sm text-title-sm text-slate-900 dark:text-white mb-2">체크리스트 만들기</h4>
+<p class="text-body-base text-on-surface-variant mb-0">미디어 분석을 위한 나만의 체크리스트를 구성해 보세요. 신뢰성, 객관성, 투명성을 기준으로 항목을 설정합니다.</p>
+</div>
+<button class="flex-shrink-0 bg-primary text-white px-8 py-4 rounded-xl font-bold hover:bg-primary-container active:scale-95 transition-all shadow-lg shadow-blue-500/20">
+                    체크리스트 작성
+                </button>
+</div>
+<!-- Step 2 Card -->
+<div class="relative overflow-hidden group bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-[0_8px_32px_rgba(0,0,0,0.04)] p-8 flex flex-col md:flex-row items-center gap-8 transition-all hover:border-purple-200">
+<div class="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity">
+<span class="material-symbols-outlined text-[120px]">cognition</span>
+</div>
+<div class="flex-shrink-0 w-20 h-20 bg-purple-100 rounded-2xl flex items-center justify-center text-purple-600 font-black text-2xl">
+                    02
+                </div>
+<div class="flex-grow">
+<h4 class="font-title-sm text-title-sm text-slate-900 dark:text-white mb-2">알고리즘 모델링</h4>
+<p class="text-body-base text-on-surface-variant mb-0">수집된 데이터를 바탕으로 알고리즘 학습 모델을 설계합니다. 변수 설정과 가중치 조정을 통해 정확도를 높여보세요.</p>
+</div>
+<button class="flex-shrink-0 bg-purple-600 text-white px-8 py-4 rounded-xl font-bold hover:bg-purple-700 active:scale-95 transition-all shadow-lg shadow-purple-500/20">
+                    모델링 시작
+                </button>
+</div>
+<!-- Step 3 Card -->
+<div class="relative overflow-hidden group bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-[0_8px_32px_rgba(0,0,0,0.04)] p-8 flex flex-col md:flex-row items-center gap-8 transition-all hover:border-orange-200">
+<div class="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity">
+<span class="material-symbols-outlined text-[120px]">verified</span>
+</div>
+<div class="flex-shrink-0 w-20 h-20 bg-orange-100 rounded-2xl flex items-center justify-center text-orange-600 font-black text-2xl">
+                    03
+                </div>
+<div class="flex-grow">
+<h4 class="font-title-sm text-title-sm text-slate-900 dark:text-white mb-2">미디어 팩트체크</h4>
+<p class="text-body-base text-on-surface-variant mb-0">설계된 모델을 활용해 실제 미디어 정보의 진위여부를 판별합니다. 검증된 사실과 증거를 바탕으로 최종 결론을 도출합니다.</p>
+</div>
+<button class="flex-shrink-0 bg-orange-600 text-white px-8 py-4 rounded-xl font-bold hover:bg-orange-700 active:scale-95 transition-all shadow-lg shadow-orange-500/20">
+                    팩트체크 실행
+                </button>
+</div>
+</section>
+<!-- Illustration Card (Extra context) -->
+<div class="mt-12 overflow-hidden rounded-3xl bg-primary-container h-64 relative flex items-center px-12 group">
+<div class="relative z-10 max-w-md">
+<h3 class="text-2xl font-bold text-white mb-2">디지털 세상의 수호자</h3>
+<p class="text-blue-100 mb-6">팩트체크는 단순한 확인을 넘어, 건강한 민주주의를 지키는 가장 강력한 도구입니다.</p>
+<div class="flex gap-2">
+<span class="bg-white/20 px-3 py-1 rounded-full text-xs text-white backdrop-blur-sm">#리터러시</span>
+<span class="bg-white/20 px-3 py-1 rounded-full text-xs text-white backdrop-blur-sm">#비판적사고</span>
+</div>
+</div>
+<div class="absolute right-0 top-0 h-full w-1/2 overflow-hidden">
+<img class="w-full h-full object-cover mix-blend-overlay opacity-40 group-hover:scale-105 transition-transform duration-700" data-alt="A futuristic digital interface representing data analysis and media literacy. Glowing holographic elements showing connections between different sources of information in a clean, high-tech environment. The lighting is dominated by professional primary blue tones and clean white backgrounds, reflecting a sense of clarity, intelligence, and modern educational excellence." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDqBM_WrBSplTk36M_LdCUOWew6PEyHqyNrJQa4o68ABOPQssINzbXhne7r5zR3nAxOrRHVECBaDLnMPrSC6teONi9IWZ1-E7Y4nI3nGVtzMZfiDegXE4pweW6pgEpsVUoChIHOpczO68cutpXiYUDi5kau8hgMeaPJ7JHjHVZnRUT1RTCPnrHGk0dDevZOcY1m0xAmet1j4q17rNDOkMonztC60qG70oAbOp_mKNI4U8reSIAylFb9f7sCBzQ36Lh5dP6xQldY6Etn"/>
+</div>
+<div class="absolute inset-0 bg-gradient-to-r from-primary-container via-primary-container to-transparent"></div>
+</div>
+</main>
+<!-- BottomNavBar (Mobile) -->
+<nav class="lg:hidden fixed bottom-0 left-0 w-full z-50 bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg flex justify-around items-center px-4 py-3 pb-safe border-t border-slate-200 dark:border-slate-800 shadow-[0_-4px_16px_rgba(0,0,0,0.08)]">
+<a class="flex flex-col items-center text-blue-600 dark:text-blue-400 bg-blue-50/80 dark:bg-blue-900/40 rounded-xl px-4 py-1 transition-all tap-highlight-transparent" href="#">
+<span class="material-symbols-outlined" data-weight="fill" style="font-variation-settings: 'FILL' 1;">home</span>
+<span class="font-['Plus_Jakarta_Sans'] text-[10px] font-medium">홈</span>
+</a>
+<a class="flex flex-col items-center text-slate-400 dark:text-slate-500 transition-all tap-highlight-transparent active:bg-slate-100 dark:active:bg-slate-800" href="#">
+<span class="material-symbols-outlined">checklist</span>
+<span class="font-['Plus_Jakarta_Sans'] text-[10px] font-medium">체크</span>
+</a>
+<a class="flex flex-col items-center text-slate-400 dark:text-slate-500 transition-all tap-highlight-transparent active:bg-slate-100 dark:active:bg-slate-800" href="#">
+<span class="material-symbols-outlined">model_training</span>
+<span class="font-['Plus_Jakarta_Sans'] text-[10px] font-medium">학습</span>
+</a>
+<a class="flex flex-col items-center text-slate-400 dark:text-slate-500 transition-all tap-highlight-transparent active:bg-slate-100 dark:active:bg-slate-800" href="#">
+<span class="material-symbols-outlined">article</span>
+<span class="font-['Plus_Jakarta_Sans'] text-[10px] font-medium">기록</span>
+</a>
+</nav>
+<!-- Contextual FAB -->
+<button class="fixed bottom-24 right-8 w-14 h-14 bg-primary text-white rounded-full shadow-xl shadow-blue-500/40 flex items-center justify-center hover:scale-110 active:scale-90 transition-all z-40 lg:bottom-12">
+<span class="material-symbols-outlined text-3xl">add</span>
+</button>
+</body></html>
