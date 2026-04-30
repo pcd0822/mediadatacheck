@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
@@ -40,6 +40,7 @@ export default function ModelingPage() {
   const [loading, setLoading] = useState(true);
   const [training, setTraining] = useState(false);
   const [model, setModel] = useState(null);
+  const [detailMedia, setDetailMedia] = useState(null);
 
   const activeChecklist = useMemo(
     () => checklists.find((c) => c.id === activeChecklistId) ?? null,
@@ -269,9 +270,16 @@ export default function ModelingPage() {
             checklist={activeChecklist}
             scores={scoresByMedia[m.id] ?? []}
             onChange={(idx, v) => setScore(m.id, idx, v)}
+            onOpenDetail={() => setDetailMedia(m)}
           />
         ))}
       </div>
+
+      <MediaDetailDrawer
+        media={detailMedia}
+        open={!!detailMedia}
+        onClose={() => setDetailMedia(null)}
+      />
 
       {model?.weights && (
         <div className="card mt-6">
@@ -318,12 +326,17 @@ export default function ModelingPage() {
   );
 }
 
-function MediaEvaluator({ media, checklist, scores, onChange }) {
+function MediaEvaluator({ media, checklist, scores, onChange, onOpenDetail }) {
   if (!checklist) return null;
   const hasTeacher = !!media.teacherEvaluation?.dimensionScores;
   return (
     <div className="card">
-      <div className="flex items-start gap-4">
+      <button
+        type="button"
+        onClick={onOpenDetail}
+        className="group flex w-full items-start gap-4 rounded-xl text-left transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+        aria-label={`${media.title} 상세 보기`}
+      >
         {media.thumbnailUrl ? (
           <img src={media.thumbnailUrl} alt="" className="h-24 w-32 rounded-xl object-cover" />
         ) : (
@@ -332,22 +345,22 @@ function MediaEvaluator({ media, checklist, scores, onChange }) {
           </div>
         )}
         <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h4 className="text-base font-semibold text-slate-900">{media.title}</h4>
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-base font-semibold text-slate-900 group-hover:text-brand-700">
+              {media.title}
+            </h4>
             {hasTeacher ? (
               <span className="badge bg-emerald-50 text-emerald-700">교사 차원 점수 ✓</span>
             ) : (
               <span className="badge bg-amber-50 text-amber-700">교사 평가 미작성</span>
             )}
+            <span className="ml-auto text-xs text-slate-400 group-hover:text-brand-600">
+              자세히 보기 →
+            </span>
           </div>
           <p className="mt-1 line-clamp-2 text-sm text-slate-600">{media.content}</p>
-          {media.link && (
-            <a href={media.link} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-brand-700 underline">
-              원본 ↗
-            </a>
-          )}
         </div>
-      </div>
+      </button>
 
       <div className="mt-4 space-y-3">
         {checklist.items.map((it, idx) => (
@@ -378,5 +391,102 @@ function MediaEvaluator({ media, checklist, scores, onChange }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function MediaDetailDrawer({ media, open, onClose }) {
+  const closeBtnRef = useRef(null);
+
+  // ESC 키로 닫기 + 열렸을 때 body 스크롤 잠금 + 닫기 버튼에 포커스
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeBtnRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open, onClose]);
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        aria-hidden={!open}
+        className={`fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300 ${
+          open ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="미디어 상세"
+        className={`fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col bg-white shadow-2xl transition-transform duration-300 ease-out sm:max-w-lg ${
+          open ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <header className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
+          <p className="text-sm font-bold text-slate-900">미디어 상세</p>
+          <button
+            ref={closeBtnRef}
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            aria-label="닫기"
+          >
+            닫기 ✕
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {media ? (
+            <div className="space-y-4">
+              {media.thumbnailUrl ? (
+                <img
+                  src={media.thumbnailUrl}
+                  alt=""
+                  className="w-full rounded-xl object-cover ring-1 ring-slate-200"
+                />
+              ) : (
+                <div className="grid h-44 w-full place-items-center rounded-xl bg-slate-100 text-sm text-slate-400">
+                  No Thumbnail
+                </div>
+              )}
+
+              <h2 className="text-lg font-bold leading-tight text-slate-900">
+                {media.title}
+              </h2>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  본문
+                </p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-800">
+                  {media.content}
+                </p>
+              </div>
+
+              {media.link ? (
+                <a
+                  href={media.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-100"
+                >
+                  원본 링크 열기 ↗
+                </a>
+              ) : (
+                <p className="text-xs text-slate-400">원본 링크가 등록되지 않았습니다.</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </aside>
+    </>
   );
 }
