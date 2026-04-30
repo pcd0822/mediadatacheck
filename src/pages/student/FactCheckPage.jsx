@@ -8,6 +8,7 @@ import {
   getAlgorithmModel,
   getChecklist,
   listChecklists,
+  listFactCheckHistory,
   saveFactCheckHistory,
 } from "../../services/firestore.js";
 import { evaluateMediaDimensions } from "../../services/gemini.js";
@@ -30,16 +31,19 @@ export default function FactCheckPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({ title: "", content: "", link: "" });
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const [cls, m] = await Promise.all([
+      const [cls, m, hist] = await Promise.all([
         listChecklists(user.uid),
         getAlgorithmModel(user.uid),
+        listFactCheckHistory(user.uid),
       ]);
       setChecklists(cls);
       setModel(m);
+      setHistory(hist);
       const initial = m?.checklistId && cls.find((c) => c.id === m.checklistId)
         ? m.checklistId
         : cls[0]?.id ?? null;
@@ -163,7 +167,94 @@ export default function FactCheckPage() {
           <Button variant="primary" onClick={handleRun} loading={running}>팩트체크 실행</Button>
         </div>
       </div>
+
+      <section className="mt-8">
+        <div className="mb-3 flex items-end justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">내가 등록한 미디어</h2>
+            <p className="text-xs text-slate-500">
+              지금까지 팩트체크한 자료들이에요. 카드를 클릭하면 결과 화면으로 이동합니다.
+            </p>
+          </div>
+          {history.length > 0 && (
+            <span className="badge bg-slate-100 text-slate-600">총 {history.length}건</span>
+          )}
+        </div>
+
+        {history.length === 0 ? (
+          <div className="card text-center text-sm text-slate-500">
+            아직 등록한 미디어가 없습니다. 위 양식에서 첫 팩트체크를 시작해보세요.
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {history.map((h) => (
+              <HistoryCard
+                key={h.id}
+                item={h}
+                onClick={() => navigate(`/student/result/${h.id}`)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
       {running && <LoadingOverlay message="Gemini가 7대 차원으로 미디어를 평가하고 있어요..." />}
     </Layout>
+  );
+}
+
+function HistoryCard({ item, onClick }) {
+  const score = Number(item.finalTotalScore ?? item.totalScore ?? 0);
+  const ci = item.confidenceInterval95;
+  const created = item.createdAt?.toDate?.() ?? null;
+  const status = item.refined
+    ? { label: "정교화됨", cls: "bg-amber-50 text-amber-700" }
+    : item.accepted
+    ? { label: "수용됨", cls: "bg-emerald-50 text-emerald-700" }
+    : { label: "미반영", cls: "bg-slate-100 text-slate-600" };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group card flex h-full flex-col gap-3 text-left transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="line-clamp-2 text-sm font-bold text-slate-900 group-hover:text-brand-700">
+          {item.media?.title || "(제목 없음)"}
+        </h3>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${status.cls}`}>
+          {status.label}
+        </span>
+      </div>
+
+      <p className="line-clamp-3 text-xs leading-5 text-slate-600">
+        {item.media?.content || ""}
+      </p>
+
+      <div className="mt-auto flex items-end justify-between gap-2 border-t border-slate-100 pt-3">
+        <div>
+          <p className="text-[10px] text-slate-400">최종 점수</p>
+          <p className="text-2xl font-extrabold text-brand-700">
+            {score.toFixed(1)}<span className="text-xs text-slate-400">/50</span>
+          </p>
+          {Array.isArray(ci) && ci.length === 2 && (
+            <p className="text-[10px] text-slate-400">
+              CI {ci[0]?.toFixed?.(1)} ~ {ci[1]?.toFixed?.(1)}
+            </p>
+          )}
+        </div>
+        <div className="text-right">
+          {created && (
+            <p className="text-[10px] text-slate-400">
+              {created.toLocaleDateString("ko-KR", { month: "short", day: "numeric" })}
+            </p>
+          )}
+          {item.media?.link && (
+            <span className="text-[10px] text-brand-600">원본 링크 ✓</span>
+          )}
+        </div>
+      </div>
+    </button>
   );
 }
