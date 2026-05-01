@@ -68,9 +68,22 @@ export default function FactCheckPage() {
       const dimsResult = await evaluateMediaDimensions(form);
       const dimensionScores = {};
       const dimensionReasons = {};
+      const fallbacks = [];
       for (const d of DIMENSIONS) {
-        dimensionScores[d] = Number(dimsResult[d]?.score ?? 3);
+        const raw = Number(dimsResult[d]?.score);
+        if (Number.isFinite(raw)) {
+          dimensionScores[d] = Math.max(1, Math.min(5, Math.round(raw)));
+        } else {
+          dimensionScores[d] = 3;
+          fallbacks.push(d);
+        }
         dimensionReasons[d] = dimsResult[d]?.reason ?? "";
+      }
+      // 5개 차원 모두 fallback이라면 응답이 사실상 비어있는 상태 — 저장하지 않고 종료
+      if (fallbacks.length === DIMENSIONS.length) {
+        throw new Error(
+          "AI 평가 결과를 읽지 못했어요. 본문이 너무 짧거나 일시적인 오류일 수 있어요. 본문을 좀 더 길게 입력하거나 잠시 후 다시 시도해주세요."
+        );
       }
 
       const weights = model?.weights ?? initialWeights();

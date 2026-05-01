@@ -23,7 +23,9 @@ import {
   generateFeedbackCards,
   initialWeights,
   isColdStart,
+  isLegacyDimMap,
   learningRate,
+  migrateLegacyDimensionScores,
   scoreVariance,
 } from "../../utils/hpfm.js";
 
@@ -48,7 +50,17 @@ export default function ResultPage() {
       ]);
       setHistory(h);
       setModel(m);
-      setScores({ ...(h?.dimensionScores ?? {}) });
+      // v1 잔재(D1~D7) dimension 키가 저장된 옛 history도 정상 표시되도록 자동 변환
+      const rawScores = h?.dimensionScores ?? {};
+      const normalized = isLegacyDimMap(rawScores)
+        ? migrateLegacyDimensionScores(rawScores)
+        : rawScores;
+      const cleaned = {};
+      for (const d of DIMENSIONS) {
+        const v = Number(normalized?.[d]);
+        if (Number.isFinite(v)) cleaned[d] = v;
+      }
+      setScores(cleaned);
       setLoading(false);
     })();
   }, [historyId, user]);
@@ -193,6 +205,14 @@ export default function ResultPage() {
 
   const cold = isColdStart(model?.trainingDataCount ?? 0);
   const scorePct = Math.max(0, Math.min(100, (totalScore / 50) * 100));
+  const hasScores = Object.keys(scores ?? {}).length > 0;
+  // 학생 가중치가 (거의) 균일이면 학습 전 상태로 간주
+  const uniformWeights = (() => {
+    const u = 1 / DIMENSIONS.length;
+    return DIMENSIONS.every(
+      (d) => Math.abs((weights?.[d]?.mu ?? u) - u) < 1e-3
+    );
+  })();
 
   return (
     <Layout
@@ -343,9 +363,17 @@ export default function ResultPage() {
                 : "비판적 점검이 강하게 권장됩니다."}
             </p>
 
-            {cold && (
+            {!hasScores && (
+              <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+                저장된 평가 점수를 읽지 못했어요. 새 미디어로 다시 팩트체크를 실행해주세요.
+              </p>
+            )}
+            {(cold || uniformWeights) && hasScores && (
               <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                아직 평가가 적게 쌓여 있어요. "기준 다듬기"를 더 진행하면 너만의 평가 기준이 더 정교해져요.
+                {cold
+                  ? "아직 평가가 적게 쌓여 5가지 기준을 동일한 비중으로 계산했어요. "
+                  : "내 기준에 변화가 적어 5가지 기준이 거의 동일한 비중으로 계산됐어요. "}
+                "기준 다듬기" 페이지에서 미디어 점수를 다양하게 매겨보면 비중이 또렷해져요.
               </p>
             )}
             {savedNote && (

@@ -123,15 +123,35 @@ async function callGemini(apiKey, prompt) {
 const VALID_DIMS = ["C1", "C2", "C3", "C4", "C5", "C6"];
 const EVAL_DIMS = ["C1", "C2", "C3", "C4", "C5"];
 
+/** v1(HPFM 7차원) 잔재 응답을 v2(IPFM 5차원)로 자동 흡수하기 위한 매핑. */
+const LEGACY_TO_NEW = {
+  D1: ["C3"],
+  D2: ["C4"],
+  D3: ["C5"],
+  D4: ["C2"],
+  D5: ["C1"],
+  D6: ["C1"],
+  D7: ["C2"],
+  D8: ["C6"],
+};
+
+function resolveDimensionCode(raw) {
+  const code = String(raw ?? "").toUpperCase().trim();
+  if (VALID_DIMS.includes(code)) return [code];
+  if (LEGACY_TO_NEW[code]) return LEGACY_TO_NEW[code];
+  return null;
+}
+
 function normalizeMappings(parsed, items) {
   const arr = Array.isArray(parsed?.mappings) ? parsed.mappings : [];
   const byIndex = {};
   for (const m of arr) {
     const idx = Number(m?.index);
     if (!Number.isInteger(idx)) continue;
-    const dim = String(m?.dimension ?? "").toUpperCase();
+    const targets = resolveDimensionCode(m?.dimension);
+    const dim = targets ? targets[0] : "C6";
     byIndex[idx] = {
-      dimension: VALID_DIMS.includes(dim) ? dim : "C6",
+      dimension: dim,
       confidence: clamp01(Number(m?.confidence)),
       reason: typeof m?.reason === "string" ? m.reason : "",
     };
@@ -141,17 +161,61 @@ function normalizeMappings(parsed, items) {
   );
 }
 
+/**
+ * 평가 응답 정규화.
+ * - v1 키(D1~D7)가 섞여 와도 v2(C1~C5)로 평균 변환.
+ * - 모든 차원이 빈 채로 오면 throw하여 호출자가 명확하게 실패를 인지.
+ */
 function normalizeEvaluation(parsed) {
   const dims = parsed?.dimensions ?? {};
+  const sums = {};
+  const counts = {};
+  const reasons = {};
+
+  for (const rawCode of Object.keys(dims)) {
+    const v = dims[rawCode];
+    if (!v) continue;
+    const raw = Math.round(Number(v.score));
+    if (!Number.isFinite(raw)) continue;
+    const score = Math.max(1, Math.min(5, raw));
+    const targets = resolveDimensionCode(rawCode);
+    if (!targets) continue;
+    for (const t of targets) {
+      if (!EVAL_DIMS.includes(t)) continue;
+      sums[t] = (sums[t] ?? 0) + score;
+      counts[t] = (counts[t] ?? 0) + 1;
+      if (!reasons[t] && typeof v.reason === "string" && v.reason.trim()) {
+        reasons[t] = v.reason;
+      }
+    }
+  }
+
+  const filledCount = EVAL_DIMS.filter((d) => counts[d]).length;
+  if (filledCount === 0) {
+    const err = new Error("AI 평가 응답이 비어 있어요. 잠시 후 다시 시도해주세요.");
+    err.status = 502;
+    err.detail = JSON.stringify(parsed).slice(0, 500);
+    throw err;
+  }
+
   const out = {};
   for (const code of EVAL_DIMS) {
-    const v = dims[code] ?? {};
-    const raw = Math.round(Number(v.score));
-    const score = Number.isFinite(raw) ? Math.max(1, Math.min(5, raw)) : 3;
-    out[code] = {
-      score,
-      reason: typeof v.reason === "string" ? v.reason : "",
-    };
+    if (counts[code]) {
+      out[code] = {
+        score: Math.round(sums[code] / counts[code]),
+        reason: reasons[code] ?? "",
+      };
+    } else {
+      // 일부 차원만 비어있는 경우 — 평균 점수로 fallback 표시 (학생 화면에서 NaN 방지)
+      const present = EVAL_DIMS.filter((d) => counts[d]).map((d) => sums[d] / counts[d]);
+      const avg = present.length
+        ? Math.round(present.reduce((a, b) => a + b, 0) / present.length)
+        : 3;
+      out[code] = {
+        score: Math.max(1, Math.min(5, avg)),
+        reason: "이 항목은 자료에서 단서를 찾기 어려워 평균값을 사용했어요.",
+      };
+    }
   }
   return out;
 }
