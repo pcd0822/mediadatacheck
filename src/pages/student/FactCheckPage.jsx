@@ -121,8 +121,8 @@ export default function FactCheckPage() {
 
   return (
     <Layout
-      title="미디어 팩트체크 (IPFM)"
-      subtitle="Gemini가 IFCN 5대 차원으로 1~5점 평가 → 내 베이지안 가중치로 50점 환산"
+      title="미디어 팩트체크"
+      subtitle="AI가 5가지 기준으로 미디어를 1~5점으로 평가하고, 내 평가 기준을 적용해 50점 만점으로 보여줘요"
       actions={<Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>}
     >
       <div className="card grid gap-5">
@@ -139,7 +139,7 @@ export default function FactCheckPage() {
           </select>
           {cold && (
             <p className="mt-2 text-xs text-amber-700">
-              ※ Cold Start 단계 (학습 데이터 {model?.trainingDataCount ?? 0}개): 균등 가중치로 환산합니다. 모델링 페이지에서 학습을 진행하면 정교화됩니다.
+              ※ 아직 평가가 적게 쌓여 있어요(현재 {model?.trainingDataCount ?? 0}개). 지금은 5가지 기준을 똑같이 보고 점수를 계산해요. "기준 다듬기"를 더 진행하면 너만의 기준이 반영됩니다.
             </p>
           )}
         </div>
@@ -199,7 +199,7 @@ export default function FactCheckPage() {
         )}
       </section>
 
-      {running && <LoadingOverlay message="Gemini가 IFCN 5대 차원으로 미디어를 평가하고 있어요..." />}
+      {running && <LoadingOverlay message="AI 친구가 5가지 기준으로 미디어를 살펴보고 있어요..." />}
     </Layout>
   );
 }
@@ -241,7 +241,7 @@ function HistoryCard({ item, onClick }) {
           </p>
           {Array.isArray(ci) && ci.length === 2 && (
             <p className="text-[10px] text-slate-400">
-              CI {ci[0]?.toFixed?.(1)} ~ {ci[1]?.toFixed?.(1)}
+              오차범위 {ci[0]?.toFixed?.(1)} ~ {ci[1]?.toFixed?.(1)}
             </p>
           )}
         </div>

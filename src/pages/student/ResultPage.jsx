@@ -8,6 +8,8 @@ import {
   appendTrainingData,
   getAlgorithmModel,
   getFactCheckHistory,
+  listTrainingData,
+  replaceFeedbackCards,
   saveAlgorithmModel,
   updateFactCheckHistory,
 } from "../../services/firestore.js";
@@ -18,6 +20,7 @@ import {
   computeFinalScore,
   confidenceInterval95,
   convergenceScore,
+  generateFeedbackCards,
   initialWeights,
   isColdStart,
   learningRate,
@@ -126,6 +129,18 @@ export default function ResultPage() {
       trainingDataCount: tCount,
       convergenceScore: conv,
     }));
+
+    // 누적 학습 데이터의 격차 패턴으로 메타인지 피드백 카드 재생성
+    try {
+      const trainings = await listTrainingData(user.uid);
+      const gapHistory = trainings
+        .map((t) => t.gap)
+        .filter((g) => g && Object.keys(g).length > 0);
+      const cards = generateFeedbackCards(gapHistory);
+      await replaceFeedbackCards(user.uid, cards);
+    } catch (err) {
+      console.warn("피드백 카드 갱신 실패", err);
+    }
   };
 
   const handleAccept = async () => {
@@ -137,7 +152,7 @@ export default function ResultPage() {
         finalDimensionScores: scores,
         finalTotalScore: totalScore,
       });
-      setSavedNote("결과를 학습 데이터에 반영했습니다. 모델 가중치가 갱신되었어요.");
+      setSavedNote("이번 평가가 내 기준에 반영됐어요. 5가지 기준 비중이 조금 다듬어졌습니다.");
     } catch (e) {
       console.error(e);
       alert(`반영 중 오류: ${e.message}`);
@@ -156,7 +171,7 @@ export default function ResultPage() {
         finalDimensionScores: scores,
         finalTotalScore: totalScore,
       });
-      setSavedNote("정교화한 점수를 더 강하게(η×1.5) 모델에 반영했어요.");
+      setSavedNote("내가 수정한 점수를 더 강하게 반영했어요. AI 결과와 다른 너의 판단이 큰 신호로 작동해요.");
       setMode("view");
     } catch (e) {
       console.error(e);
@@ -189,7 +204,7 @@ export default function ResultPage() {
           >
             fact_check
           </span>
-          팩트체크 결과 (IPFM)
+          팩트체크 결과
         </span>
       }
       subtitle={`미디어 제목: ${history.media?.title ?? "(제목 없음)"}`}
@@ -206,24 +221,24 @@ export default function ResultPage() {
               항목별 평가
             </h2>
             {mode === "view" ? (
-              <span className="flex items-center gap-1 rounded-full bg-brand-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-brand-700">
+              <span className="flex items-center gap-1 rounded-full bg-brand-100 px-3 py-1 text-xs font-bold tracking-wider text-brand-700">
                 <span
                   className="material-symbols-outlined"
                   style={{ fontSize: 14 }}
                 >
                   auto_awesome
                 </span>
-                Gemini 평가
+                AI 평가
               </span>
             ) : (
-              <span className="flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-800">
+              <span className="flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold tracking-wider text-amber-800">
                 <span
                   className="material-symbols-outlined"
                   style={{ fontSize: 14 }}
                 >
                   edit_note
                 </span>
-                정교화 모드 (η×1.5)
+                내 점수로 수정 중
               </span>
             )}
           </div>
@@ -242,13 +257,13 @@ export default function ResultPage() {
                   <div className="mb-4 flex items-start justify-between gap-3">
                     <div>
                       <h3 className="mb-1 text-base font-bold text-ink">
-                        {dim} · {info.name}
+                        {info.name}
                       </h3>
                       <span className="rounded bg-surface-high px-2 py-0.5 text-[10px] font-bold text-ink-muted">
-                        가중치 {(w.mu * 100).toFixed(0)}% · σ{(w.sigma * 100).toFixed(0)}
+                        내 기준 비중 {(w.mu * 100).toFixed(0)}%
                       </span>
                       <p className="mt-1 text-[11px] text-ink-muted">
-                        {info.framework}
+                        {info.description}
                       </p>
                     </div>
                     <div className="text-right">
@@ -307,12 +322,11 @@ export default function ResultPage() {
               <span className="text-2xl font-bold text-slate-300">/50</span>
             </div>
             <div className="mb-4 rounded-xl bg-brand-50 p-3">
-              <p className="text-xs font-medium italic text-brand-700">
-                가중평균 = Σ(C_i × μ_i) × 10
+              <p className="text-xs font-medium text-brand-700">
+                내 평가 기준을 적용한 점수예요.
               </p>
               <p className="mt-1 text-[11px] text-brand-700/80">
-                Var = Σ C_i² × σ_i² · 95% CI {ci95[0].toFixed(1)} ~{" "}
-                {ci95[1].toFixed(1)}
+                95% 확률로 {ci95[0].toFixed(1)} ~ {ci95[1].toFixed(1)}점 사이일 거예요.
               </p>
             </div>
             <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-surface-base">
@@ -331,7 +345,7 @@ export default function ResultPage() {
 
             {cold && (
               <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                Cold Start 단계 — 모델링을 더 진행하면 가중치가 정교해집니다.
+                아직 평가가 적게 쌓여 있어요. "기준 다듬기"를 더 진행하면 너만의 평가 기준이 더 정교해져요.
               </p>
             )}
             {savedNote && (
@@ -376,7 +390,7 @@ export default function ResultPage() {
                     disabled={acting}
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-4 font-semibold text-white shadow-lg shadow-brand-500/20 transition-all hover:bg-brand-500 active:scale-95 disabled:opacity-60"
                   >
-                    {acting ? "저장 중..." : "재계산 후 저장 (η×1.5)"}
+                    {acting ? "저장 중..." : "수정한 점수로 저장하기"}
                   </button>
                   <button
                     type="button"

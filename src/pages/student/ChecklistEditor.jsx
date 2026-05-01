@@ -128,7 +128,7 @@ export default function ChecklistEditor() {
   return (
     <Layout
       title="체크리스트 작성"
-      subtitle="팩트체크 질문과 1~5점 척도를 직접 설계해보세요"
+      subtitle="미디어를 평가할 때 쓸 질문과 1~5점 기준을 직접 만들어요"
       actions={
         <>
           <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>
@@ -183,12 +183,12 @@ export default function ChecklistEditor() {
                     <span className="badge">항목 {idx + 1}</span>
                     {it.dimension && DIMENSION_INFO[it.dimension] ? (
                       <span className="badge bg-emerald-50 text-emerald-700">
-                        {it.dimension} · {DIMENSION_INFO[it.dimension].name}
+                        {DIMENSION_INFO[it.dimension].name}
                       </span>
                     ) : it.dimension === "C6" ? (
-                      <span className="badge bg-slate-100 text-slate-600">C6 · 사용자 정의</span>
+                      <span className="badge bg-slate-100 text-slate-600">내가 만든 항목</span>
                     ) : (
-                      <span className="badge bg-amber-50 text-amber-700">저장 시 자동 분류</span>
+                      <span className="badge bg-amber-50 text-amber-700">저장하면 기준에 자동 분류돼요</span>
                     )}
                   </div>
                   <Button variant="ghost" onClick={() => removeItem(idx)}>삭제</Button>

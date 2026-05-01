@@ -112,7 +112,7 @@ export default function ModelingPage() {
     }
     if (!activeChecklist.items.every((it) => it.dimension)) {
       alert(
-        "체크리스트의 모든 항목이 차원에 매핑되어 있어야 합니다. 체크리스트 페이지에서 한번 더 저장해주세요."
+        "체크리스트 항목들이 5가지 기준에 아직 분류되지 않았어요. 체크리스트 페이지에서 한번 더 저장해주세요."
       );
       return;
     }
@@ -191,13 +191,13 @@ export default function ModelingPage() {
     }
   };
 
-  if (loading) return <Layout title="모델링"><SkeletonList count={3} /></Layout>;
+  if (loading) return <Layout title="기준 다듬기"><SkeletonList count={3} /></Layout>;
 
   if (!checklists.length) {
     return (
-      <Layout title="모델링" subtitle="체크리스트를 먼저 만들어야 합니다">
+      <Layout title="기준 다듬기" subtitle="먼저 체크리스트를 만들어야 해요">
         <div className="card text-center">
-          <p className="text-slate-600">체크리스트가 없습니다.</p>
+          <p className="text-slate-600">체크리스트가 없어요.</p>
           <Button variant="primary" className="mt-3" onClick={() => navigate("/student/checklist")}>
             체크리스트 만들러 가기
           </Button>
@@ -208,9 +208,9 @@ export default function ModelingPage() {
 
   if (media.length === 0) {
     return (
-      <Layout title="모델링" subtitle="선생님이 등록한 미디어를 평가합니다">
+      <Layout title="기준 다듬기" subtitle="선생님이 올린 미디어를 평가해요">
         <div className="card text-center">
-          <p className="text-slate-600">아직 등록된 미디어 자료가 없습니다.</p>
+          <p className="text-slate-600">아직 선생님이 올린 미디어가 없어요.</p>
           <Button variant="secondary" className="mt-3" onClick={() => navigate("/student")}>← 대시보드</Button>
         </div>
       </Layout>
@@ -219,20 +219,25 @@ export default function ModelingPage() {
 
   const tCount = model?.trainingDataCount ?? 0;
   const phaseLabel = isColdStart(tCount)
-    ? "Cold Start (균등 가중치)"
+    ? "기준 잡는 중"
     : bayesianActive(tCount)
-    ? "Bayesian 갱신 활성"
-    : "워밍업 (전이 단계)";
+    ? "기준 다듬는 중"
+    : "기준 시험해보는 중";
+  const phaseHint = isColdStart(tCount)
+    ? "평가가 더 모이면 본격적으로 기준이 다듬어져요"
+    : bayesianActive(tCount)
+    ? "이제 너의 평가 습관이 안정적으로 반영돼요"
+    : "조금만 더 평가하면 본격적인 다듬기가 시작돼요";
 
   return (
     <Layout
-      title="알고리즘 모델링 (IPFM)"
-      subtitle="학생 vs 교사 차원별 격차로 IFCN 5대 차원 가중치를 베이지안 점진 갱신합니다"
+      title="내 평가 기준 다듬기"
+      subtitle="선생님 평가와 비교해서 내 평가 기준을 조금씩 조정해요"
       actions={
         <>
           <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>
           <Button variant="primary" onClick={handleTrain} loading={training}>
-            저장하고 모델 학습
+            저장하고 기준 다듬기
           </Button>
         </>
       }
@@ -251,13 +256,13 @@ export default function ModelingPage() {
               ))}
             </select>
             <p className="mt-2 text-xs text-slate-500">
-              평가 완료 미디어 {evaluatedCount} / {media.length} · 교사 차원 점수 보유 {teacherEvaluatedCount}건
+              내가 평가한 미디어 {evaluatedCount} / {media.length} · 선생님 평가가 있는 미디어 {teacherEvaluatedCount}건
             </p>
           </div>
           <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
-            <p className="text-xs text-slate-500">학습 단계</p>
+            <p className="text-xs text-slate-500">진행 단계</p>
             <p className="text-sm font-bold text-slate-800">{phaseLabel}</p>
-            <p className="mt-1 text-xs text-slate-500">η = {learningRate(tCount).toFixed(3)}</p>
+            <p className="mt-1 text-[11px] leading-tight text-slate-500">{phaseHint}</p>
           </div>
         </div>
       </div>
@@ -284,21 +289,21 @@ export default function ModelingPage() {
       {model?.weights && (
         <div className="card mt-6">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-slate-900">학습된 가중치 (μ ± σ)</h3>
+            <h3 className="text-base font-bold text-slate-900">내가 중요하게 보는 5가지 기준</h3>
             {Number.isFinite(model.convergenceScore) && (
               <span className="badge bg-brand-50 text-brand-700">
-                수렴도 {(model.convergenceScore * 100).toFixed(0)}%
+                선생님과 닮은 정도 {(model.convergenceScore * 100).toFixed(0)}%
               </span>
             )}
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            낮은 σ = 안정화된 차원 · μ 합 = 1
+            막대 길이 = 그 기준을 얼마나 중요하게 보는지. 평가가 쌓일수록 안정돼요.
           </p>
           <div className="mt-3 space-y-2">
             {weightsToArray(model.weights).map((w) => (
               <div key={w.code} className="flex items-center gap-3">
                 <span className="w-44 truncate text-sm text-slate-700">
-                  {w.code} · {w.name}
+                  {w.name}
                 </span>
                 <div className="flex-1">
                   <div className="h-2 w-full rounded-full bg-slate-100">
@@ -308,9 +313,8 @@ export default function ModelingPage() {
                     />
                   </div>
                 </div>
-                <span className="w-28 text-right text-sm font-semibold text-brand-700">
-                  {(w.mu * 100).toFixed(1)}%{" "}
-                  <span className="text-xs text-slate-400">±{(w.sigma * 100).toFixed(1)}</span>
+                <span className="w-16 text-right text-sm font-semibold text-brand-700">
+                  {(w.mu * 100).toFixed(1)}%
                 </span>
               </div>
             ))}
@@ -350,9 +354,9 @@ function MediaEvaluator({ media, checklist, scores, onChange, onOpenDetail }) {
               {media.title}
             </h4>
             {hasTeacher ? (
-              <span className="badge bg-emerald-50 text-emerald-700">교사 차원 점수 ✓</span>
+              <span className="badge bg-emerald-50 text-emerald-700">선생님 평가 있음 ✓</span>
             ) : (
-              <span className="badge bg-amber-50 text-amber-700">교사 평가 미작성</span>
+              <span className="badge bg-amber-50 text-amber-700">선생님 평가 대기 중</span>
             )}
             <span className="ml-auto text-xs text-slate-400 group-hover:text-brand-600">
               자세히 보기 →
@@ -369,7 +373,7 @@ function MediaEvaluator({ media, checklist, scores, onChange, onOpenDetail }) {
               <p className="text-sm text-slate-700">{idx + 1}. {it.question}</p>
               {it.dimension && DIMENSION_INFO[it.dimension] && (
                 <span className="mt-0.5 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">
-                  {it.dimension} · {DIMENSION_INFO[it.dimension].name}
+                  {DIMENSION_INFO[it.dimension].name}
                 </span>
               )}
             </div>

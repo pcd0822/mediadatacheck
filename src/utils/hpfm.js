@@ -279,21 +279,21 @@ function buildCard(dim, type, mean, variance) {
   if (type === "over") {
     return {
       ...base,
-      diagnosis: `${info.name}: 교사보다 평균 ${(-mean).toFixed(1)}점 높게 평가하는 경향이 있습니다.`,
-      suggestion: `이 차원의 단서(예: ${info.description})에 대한 민감도를 조금 더 높여보세요. 참고: ${info.framework}.`,
+      diagnosis: `선생님보다 평균 ${(-mean).toFixed(1)}점 정도 후하게 주는 편이에요.`,
+      suggestion: `"${info.description}" 같은 단서를 한 번 더 살펴봐. 너무 점수를 살려주고 있을지도 몰라.`,
     };
   }
   if (type === "under") {
     return {
       ...base,
-      diagnosis: `${info.name}: 교사보다 평균 ${mean.toFixed(1)}점 낮게 평가하는 경향이 있습니다.`,
-      suggestion: `너무 박하게 보고 있을 수 있습니다. 좋은 자료의 단서가 보일 때는 점수를 살려두는 것도 방법이에요. 참고: ${info.framework}.`,
+      diagnosis: `선생님보다 평균 ${mean.toFixed(1)}점 정도 박하게 주는 편이에요.`,
+      suggestion: `자료에 좋은 단서("${info.description}")가 보이면 점수를 살려두는 것도 좋은 판단이야.`,
     };
   }
   return {
     ...base,
-    diagnosis: `${info.name}: 평가 결과가 흔들리는 경향이 있습니다 (분산 ${variance.toFixed(2)}).`,
-    suggestion: `이 차원에 대한 자신의 루브릭 정의를 다시 정비해보세요. 참고: ${info.framework}.`,
+    diagnosis: `평가 점수가 자료마다 들쭉날쭉해요. 같은 기준이 흔들리는 중일 수 있어요.`,
+    suggestion: `너만의 채점 기준을 한번 정리해두면 다음 평가가 더 또렷해져. 어떤 표현을 보면 몇 점인지 미리 정해두기.`,
   };
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import LoadingOverlay from "../components/Loading/LoadingOverlay.jsx";
 import Spinner from "../components/Loading/Spinner.jsx";
+import { MascotScene } from "../components/Mascot.jsx";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { ensureUserProfile, signInWithGoogle } from "../services/auth.js";
 
@@ -62,13 +63,8 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <div className="relative mb-10 aspect-video w-full overflow-hidden rounded-2xl">
-            <img
-              alt="Students collaborating"
-              className="h-full w-full object-cover"
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDleL-XHVCu2vqLEXoC5yQFMZwVgqhfSabqYJabdxHgPf8oi0Rdmlj0ObLVTwnoUy8zs6V-ulu-JRpPz8a7_xFu7nmDdb4SQjqmXICZiadW864KaMYRtXmQ4Y508TGvHMuRJbbOI7bjuN4P79QvZ98wYMsFtN-_hprJOZQi1gQ3fFZpnnOo4qLb-EOwqd1gtJL1FodgBeVxkD_5ZLDreXVxqw-GUj58oltjjVDNxJdfy25mMz4BO3QzsJtBdkvML-s41mBgRMh5VbmQ"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-brand-600/20 to-transparent" />
+          <div className="relative mb-10 aspect-video w-full overflow-hidden rounded-2xl bg-gradient-to-br from-brand-50 to-white">
+            <MascotScene className="h-full w-full" />
           </div>
 
           <div className="flex flex-col gap-3">
