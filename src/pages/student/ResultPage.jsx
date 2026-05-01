@@ -65,7 +65,14 @@ export default function ResultPage() {
     })();
   }, [historyId, user]);
 
-  const weights = history?.weightsSnapshot ?? model?.weights ?? initialWeights();
+  // 학생 대시보드와 항상 같은 비중을 표시하도록 현재 model.weights를 우선 사용한다.
+  // history.weightsSnapshot은 저장 시점(학습 전일 수 있음)의 값이라 정교화·수용 이후엔 stale.
+  const weights =
+    (model?.weights && Object.keys(model.weights).length > 0
+      ? model.weights
+      : null) ??
+    history?.weightsSnapshot ??
+    initialWeights();
 
   const totalScore = useMemo(
     () => computeFinalScore(weights, scores),
@@ -343,7 +350,7 @@ export default function ResultPage() {
             </div>
             <div className="mb-4 rounded-xl bg-brand-50 p-3">
               <p className="text-xs font-medium text-brand-700">
-                내 평가 기준을 적용한 점수예요.
+                대시보드의 내 기준 비중을 그대로 적용한 점수예요.
               </p>
               <p className="mt-1 text-[11px] text-brand-700/80">
                 95% 확률로 {ci95[0].toFixed(1)} ~ {ci95[1].toFixed(1)}점 사이일 거예요.
