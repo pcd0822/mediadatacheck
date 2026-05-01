@@ -42,7 +42,7 @@ const STEPS = [
     icon: "model_training",
     bigIcon: "cognition",
     title: "내 평가 기준 다듬기",
-    desc: "선생님이 올린 미디어를 직접 평가하고 선생님 평가와 비교해, 내 기준을 조금씩 다듬어요.",
+    desc: "선생님이 올린 미디어를 직접 평가하면서 내 평가 기준을 조금씩 다듬어요.",
     cta: "기준 다듬기 시작",
     path: "/student/modeling",
     accent: "purple",
@@ -153,7 +153,7 @@ export default function StudentDashboard() {
               tagTone={model?.trainingDataCount >= 5 ? "emerald" : "amber"}
             />
             <StatCard
-              label="선생님과 닮은 정도"
+              label="내 기준 자리잡힌 정도"
               value={convergencePct}
               tone="emerald"
               icon="trending_up"
@@ -213,7 +213,7 @@ export default function StudentDashboard() {
                   내 평가 습관 분석
                 </h3>
                 <p className="mt-1 text-xs text-ink-muted">
-                  선생님 평가와 비교해서 알아낸 너의 평가 버릇이야. 자기 점검에 활용해봐.
+                  지금까지 평가한 결과에서 발견한 너의 평가 버릇이야. 자기 점검에 활용해봐.
                 </p>
               </div>
               <span className="badge bg-emerald-50 text-emerald-700">
@@ -238,9 +238,6 @@ export default function StudentDashboard() {
                   const info = DIMENSION_INFO[c.dimension];
                   const meta = TYPE_META[c.type] ?? TYPE_META.inconsistent;
                   const tone = TYPE_TONES[meta.tone];
-                  const friendlyFramework = (c.framework ?? info?.framework ?? "")
-                    .replace(/^IFCN\s*강령\s*\d+\s*[—–-]\s*/, "")
-                    .replace(/^IFCN\s*/, "");
                   return (
                     <div
                       key={c.id ?? `${c.dimension}-${c.type}`}
@@ -262,14 +259,21 @@ export default function StudentDashboard() {
                           {meta.label}
                         </span>
                       </div>
-                      <p className="mt-2 text-xs text-ink-variant">{c.diagnosis}</p>
-                      <p className="mt-1 text-[11px] leading-5 text-ink-variant/80">
-                        {c.suggestion}
+                      <p className="mt-2 text-xs font-semibold text-ink">
+                        {c.diagnosis}
                       </p>
-                      {friendlyFramework && (
-                        <p className="mt-2 text-[10px] font-semibold text-ink-muted">
-                          🎯 핵심 원칙: {friendlyFramework}
+                      {c.detail && (
+                        <p className="mt-1.5 text-[11px] leading-5 text-ink-variant">
+                          {c.detail}
                         </p>
+                      )}
+                      {c.suggestion && (
+                        <div className="mt-2 rounded-lg bg-white/70 px-3 py-2">
+                          <p className="text-[11px] leading-5 text-ink-variant">
+                            <span className="font-semibold text-brand-700">💡 다음엔:</span>{" "}
+                            {c.suggestion}
+                          </p>
+                        </div>
                       )}
                     </div>
                   );

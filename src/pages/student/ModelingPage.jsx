@@ -232,7 +232,7 @@ export default function ModelingPage() {
   return (
     <Layout
       title="내 평가 기준 다듬기"
-      subtitle="선생님 평가와 비교해서 내 평가 기준을 조금씩 조정해요"
+      subtitle="여러 미디어를 평가하면서 내 평가 기준을 조금씩 다듬어요"
       actions={
         <>
           <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>
@@ -256,7 +256,7 @@ export default function ModelingPage() {
               ))}
             </select>
             <p className="mt-2 text-xs text-slate-500">
-              내가 평가한 미디어 {evaluatedCount} / {media.length} · 선생님 평가가 있는 미디어 {teacherEvaluatedCount}건
+              내가 평가한 미디어 {evaluatedCount} / {media.length} · 기준 평가가 준비된 미디어 {teacherEvaluatedCount}건
             </p>
           </div>
           <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
@@ -292,7 +292,7 @@ export default function ModelingPage() {
             <h3 className="text-base font-bold text-slate-900">내가 중요하게 보는 5가지 기준</h3>
             {Number.isFinite(model.convergenceScore) && (
               <span className="badge bg-brand-50 text-brand-700">
-                선생님과 닮은 정도 {(model.convergenceScore * 100).toFixed(0)}%
+                내 기준 자리잡힌 정도 {(model.convergenceScore * 100).toFixed(0)}%
               </span>
             )}
           </div>
@@ -354,9 +354,9 @@ function MediaEvaluator({ media, checklist, scores, onChange, onOpenDetail }) {
               {media.title}
             </h4>
             {hasTeacher ? (
-              <span className="badge bg-emerald-50 text-emerald-700">선생님 평가 있음 ✓</span>
+              <span className="badge bg-emerald-50 text-emerald-700">기준 평가 준비됨 ✓</span>
             ) : (
-              <span className="badge bg-amber-50 text-amber-700">선생님 평가 대기 중</span>
+              <span className="badge bg-amber-50 text-amber-700">기준 평가 준비 중</span>
             )}
             <span className="ml-auto text-xs text-slate-400 group-hover:text-brand-600">
               자세히 보기 →
