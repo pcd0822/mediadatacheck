@@ -89,7 +89,8 @@ export default function FactCheckPage() {
         variance,
         confidenceInterval95: ci95,
         accepted: false,
-        version: "HPFM-1.0",
+        version: "IPFM-2.0",
+        standard_basis: "IFCN_5_principles",
       });
 
       navigate(`/student/result/${historyId}`);
@@ -120,8 +121,8 @@ export default function FactCheckPage() {
 
   return (
     <Layout
-      title="미디어 팩트체크 (HPFM)"
-      subtitle="Gemini가 7대 차원으로 1~5점 평가 → 내 베이지안 가중치로 50점 환산"
+      title="미디어 팩트체크 (IPFM)"
+      subtitle="Gemini가 IFCN 5대 차원으로 1~5점 평가 → 내 베이지안 가중치로 50점 환산"
       actions={<Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>}
     >
       <div className="card grid gap-5">
@@ -198,7 +199,7 @@ export default function FactCheckPage() {
         )}
       </section>
 
-      {running && <LoadingOverlay message="Gemini가 7대 차원으로 미디어를 평가하고 있어요..." />}
+      {running && <LoadingOverlay message="Gemini가 IFCN 5대 차원으로 미디어를 평가하고 있어요..." />}
     </Layout>
   );
 }

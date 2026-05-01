@@ -189,7 +189,7 @@ export default function ResultPage() {
           >
             fact_check
           </span>
-          팩트체크 결과 (HPFM)
+          팩트체크 결과 (IPFM)
         </span>
       }
       subtitle={`미디어 제목: ${history.media?.title ?? "(제목 없음)"}`}
@@ -231,7 +231,7 @@ export default function ResultPage() {
           <div className="space-y-4">
             {DIMENSIONS.map((dim) => {
               const info = DIMENSION_INFO[dim];
-              const w = weights?.[dim] ?? { mu: 1 / 7, sigma: 0.15 };
+              const w = weights?.[dim] ?? { mu: 1 / DIMENSIONS.length, sigma: 0.15 };
               const reason = history.dimensionReasons?.[dim];
               const value = scores[dim] ?? 3;
               return (
@@ -308,10 +308,10 @@ export default function ResultPage() {
             </div>
             <div className="mb-4 rounded-xl bg-brand-50 p-3">
               <p className="text-xs font-medium italic text-brand-700">
-                가중평균 = Σ(D_i × μ_i) × 10
+                가중평균 = Σ(C_i × μ_i) × 10
               </p>
               <p className="mt-1 text-[11px] text-brand-700/80">
-                Var = Σ D_i² × σ_i² · 95% CI {ci95[0].toFixed(1)} ~{" "}
+                Var = Σ C_i² × σ_i² · 95% CI {ci95[0].toFixed(1)} ~{" "}
                 {ci95[1].toFixed(1)}
               </p>
             </div>

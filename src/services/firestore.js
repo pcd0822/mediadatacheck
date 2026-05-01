@@ -134,15 +134,17 @@ export async function listStudentEvaluationsForUser(uid) {
   return results;
 }
 
-/* ====================== algorithm_model (HPFM-1.0) ====================== */
+/* ====================== algorithm_model (IPFM-2.0) ====================== */
 
-const HPFM_VERSION = "HPFM-1.0";
+const MODEL_VERSION = "IPFM-2.0";
+const STANDARD_BASIS = "IFCN_5_principles";
 
 export async function saveAlgorithmModel(uid, model) {
   await setDoc(
     doc(db, "users", uid, "algorithm_model", "current"),
     {
-      version: HPFM_VERSION,
+      version: MODEL_VERSION,
+      standard_basis: STANDARD_BASIS,
       weights: model.weights ?? null,
       checklistId: model.checklistId ?? null,
       trainingDataCount: model.trainingDataCount ?? 0,
@@ -182,7 +184,7 @@ export async function clearTrainingData(uid) {
   await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
 }
 
-/* ====================== feedback_cards (HPFM 메타인지 카드) ====================== */
+/* ====================== feedback_cards (IPFM 메타인지 카드) ====================== */
 
 export async function replaceFeedbackCards(uid, cards) {
   const colRef = collection(db, "users", uid, "feedback_cards");

@@ -1,9 +1,9 @@
 /**
- * Netlify Function: Gemini 프록시 (HPFM 지원)
+ * Netlify Function: Gemini 프록시 (IPFM v2.0 지원)
  *
  * 두 가지 모드 지원:
- *  - mode: "map"      → 체크리스트 항목 → 7대 차원(D1~D7) 자동 분류
- *  - mode: "evaluate" → 미디어 자료 → 7대 차원 1~5점 평가 (단일 호출에서 7개 결과)
+ *  - mode: "map"      → 체크리스트 항목 → IFCN 5대 차원(C1~C5) 자동 분류
+ *  - mode: "evaluate" → 미디어 자료 → 5대 차원 1~5점 평가 (단일 호출에서 5개 결과)
  *
  * GEMINI_API_KEY는 서버에서만 사용 (클라이언트 미노출).
  */
@@ -11,14 +11,17 @@
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 const DIMENSION_GUIDE = `
-[7대 표준 차원]
-D1 출처 권위성 (Authority, CRAAP·SIFT-Investigate): 작성자/매체/기관의 신뢰성 — 작성자 명시, 매체의 발행 이력, 도메인 평판
-D2 내용 정확성 (Accuracy, CRAAP·FEVER-Verdict): 사실 검증 가능 여부 — 검증 가능한 사실 진술 비율, 통계·수치의 출처
-D3 시의성 (Currency, CRAAP): 정보의 최신성 — 보도-사건 시점 격차, 인용 자료의 최신성
-D4 근거 제시 (Evidence, FEVER-Retrieval·SIFT-Trace): 출처·인용·데이터 — 1차 출처, 다중 교차 인용, 데이터·전문가 인용
-D5 편향성·목적 (Bias/Purpose, CRAAP·IFCN): 편향·의도·광고성 — 한쪽 입장만, 정파적 어휘, 광고성·홍보성 단서
-D6 언어 건전성 (Language Integrity, IFCN): 선정성·감정 자극 — 자극 어휘, 클릭베이트, 단정·과장 표현
-D7 검증 가능성 (Verifiability, FEVER·IFCN): 교차검증 단서 — 외부 교차검증, 원자료 접근, 반증 가능성
+[IFCN 5대 강령 기반 5대 차원]
+C1 공정성·균형 (Fairness & Balance, IFCN 강령 1 — 초당파성과 공정성):
+   다양한 입장 균형, 자극·정파적 어휘 자제, 작성자 의견과 사실의 구분, 광고·홍보성 단서
+C2 근거·자료의 투명성 (Source Transparency, IFCN 강령 2 — 자료 출처의 투명성):
+   주요 주장의 1차 출처·인용·데이터 명시, 외부 링크·각주를 통한 검증 가능성, 다중 독립 출처의 일치
+C3 출처·작성자의 투명성 (Author/Org Transparency, IFCN 강령 3 — 재원·조직의 투명성):
+   작성자·매체의 신원·자격·이력, 매체의 소유 구조·재원·이해관계 공개 여부
+C4 검증된 방법과 증거 (Methodology & Evidence, IFCN 강령 4 — 방법론의 투명성):
+   사실 진술의 정확성, 통계 산출 방식·연구 방법 명시, 추측과 사실의 구분, 인용 맥락 보존
+C5 정정 가능성과 시의성 (Correction & Currency, IFCN 강령 5 — 개방성과 정직한 수정):
+   발행일 명확성, 다루는 주제 대비 최신성, 정정·갱신 정책의 공개 여부와 후속 보도 연결
 `.trim();
 
 /* ===================== 매핑 모드 ===================== */
@@ -28,7 +31,7 @@ function buildMapPrompt(items) {
     .map((it, idx) => `${idx}. ${it.question || "(빈 항목)"}`)
     .join("\n");
   return `당신은 미디어 리터러시 전문가입니다.
-다음 팩트체킹 질문들을 7대 표준 차원 중 가장 적합한 단일 차원으로 분류하세요.
+다음 팩트체킹 질문들을 IFCN 5대 강령 기반 5대 차원 중 가장 적합한 단일 차원으로 분류하세요.
 
 ${DIMENSION_GUIDE}
 
@@ -37,19 +40,20 @@ ${list}
 
 규칙:
 - 각 질문에 가장 적합한 차원 1개만 부여한다.
-- 어디에도 명확히 속하지 않으면 "D8" (사용자 정의)로 분류한다.
+- 어디에도 명확히 속하지 않으면 "C6" (사용자 정의)로 분류한다.
 - confidence는 0~1 사이 실수.
 - JSON만 출력. 마크다운 금지.
 
 응답 스키마:
-{"mappings":[{"index":0,"dimension":"D2","confidence":0.87,"reason":"..."}, ...]}`;
+{"mappings":[{"index":0,"dimension":"C2","confidence":0.87,"reason":"..."}, ...]}`;
 }
 
 /* ===================== 평가 모드 ===================== */
 
 function buildEvaluatePrompt(media) {
   return `당신은 미디어 리터러시 보조 AI입니다.
-다음 미디어 자료를 7대 차원 각각에 대해 1~5점 정수로 평가하세요. 각 차원의 평가 근거를 1~2문장 한국어로 작성합니다.
+다음 미디어 자료를 IFCN 5대 강령 기반 5대 차원 각각에 대해 1~5점 정수로 평가하세요.
+각 차원의 평가 근거를 1~2문장 한국어로 작성합니다.
 
 ${DIMENSION_GUIDE}
 
@@ -61,11 +65,11 @@ ${media.content || ""}
 
 규칙:
 - 점수는 1, 2, 3, 4, 5 중 하나의 정수.
-- 7개 차원 모두 평가.
+- 5개 차원(C1~C5) 모두 평가.
 - JSON만 출력. 마크다운 금지.
 
 응답 스키마:
-{"dimensions":{"D1":{"score":4,"reason":"..."},"D2":{"score":3,"reason":"..."},"D3":{"score":5,"reason":"..."},"D4":{"score":3,"reason":"..."},"D5":{"score":2,"reason":"..."},"D6":{"score":4,"reason":"..."},"D7":{"score":3,"reason":"..."}}}`;
+{"dimensions":{"C1":{"score":4,"reason":"..."},"C2":{"score":3,"reason":"..."},"C3":{"score":5,"reason":"..."},"C4":{"score":3,"reason":"..."},"C5":{"score":2,"reason":"..."}}}`;
 }
 
 /* ===================== 유틸 ===================== */
@@ -116,7 +120,8 @@ async function callGemini(apiKey, prompt) {
   return parsed;
 }
 
-const VALID_DIMS = ["D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8"];
+const VALID_DIMS = ["C1", "C2", "C3", "C4", "C5", "C6"];
+const EVAL_DIMS = ["C1", "C2", "C3", "C4", "C5"];
 
 function normalizeMappings(parsed, items) {
   const arr = Array.isArray(parsed?.mappings) ? parsed.mappings : [];
@@ -126,20 +131,20 @@ function normalizeMappings(parsed, items) {
     if (!Number.isInteger(idx)) continue;
     const dim = String(m?.dimension ?? "").toUpperCase();
     byIndex[idx] = {
-      dimension: VALID_DIMS.includes(dim) ? dim : "D8",
+      dimension: VALID_DIMS.includes(dim) ? dim : "C6",
       confidence: clamp01(Number(m?.confidence)),
       reason: typeof m?.reason === "string" ? m.reason : "",
     };
   }
   return items.map((_, i) =>
-    byIndex[i] ?? { dimension: "D8", confidence: 0, reason: "분류 실패" }
+    byIndex[i] ?? { dimension: "C6", confidence: 0, reason: "분류 실패" }
   );
 }
 
 function normalizeEvaluation(parsed) {
   const dims = parsed?.dimensions ?? {};
   const out = {};
-  for (const code of ["D1", "D2", "D3", "D4", "D5", "D6", "D7"]) {
+  for (const code of EVAL_DIMS) {
     const v = dims[code] ?? {};
     const raw = Math.round(Number(v.score));
     const score = Number.isFinite(raw) ? Math.max(1, Math.min(5, raw)) : 3;

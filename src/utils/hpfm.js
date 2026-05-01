@@ -1,65 +1,59 @@
 /**
- * HPFM (Hybrid Progressive Fact-Check Model)
+ * IPFM (IFCN-aligned Progressive Fact-Check Model) v2.0
  *
- * 7대 표준 차원(D1~D7)에 대한 베이지안 점진적 가중치 모델.
- * - 사전(Prior): 학생 가중치 W_student = {Di: {mu, sigma}}
- * - 갱신(Update): 새로운 (미디어, 교사 평가) 또는 (미디어, 학생 정교화) 쌍이 들어올 때
- *   w_i^(t+1) = w_i^(t) + η × Gap_i × D_i_score / Σ(D_j_score²)
- * - 학습률 η(t) = max(0.05, 0.2 × exp(-0.05 × t))
- * - σ는 데이터가 누적될수록 점차 감소 (학생의 판단이 안정화됨을 의미)
+ * IFCN 5대 강령에 정렬된 5개 평가 차원(C1~C5)에 대한 베이지안 점진적 가중치 모델.
+ *  - 사전(Prior): 학생 가중치 W_student = {Ci: {mu, sigma}}, 초기 mu = 1/5 (0.20)
+ *  - 갱신(Update): 새로운 (미디어, 교사 평가) 또는 (미디어, 학생 정교화) 쌍이 들어올 때
+ *      w_i^(t+1) = w_i^(t) + η × Gap_i × C_i_score / Σ(C_j_score²)
+ *  - 학습률 η(t) = max(0.05, 0.2 × exp(-0.05 × t))
+ *  - σ는 데이터가 누적될수록 점차 감소
+ *
+ * 본 파일은 호환성을 위해 파일명을 hpfm.js로 유지하지만 모델은 IPFM-2.0입니다.
  */
 
-export const DIMENSIONS = ["D1", "D2", "D3", "D4", "D5", "D6", "D7"];
+export const MODEL_VERSION = "IPFM-2.0";
+export const STANDARD_BASIS = "IFCN_5_principles";
+
+export const DIMENSIONS = ["C1", "C2", "C3", "C4", "C5"];
+
+/** 학생 체크리스트의 자유 입력 항목이 5대 차원 어디에도 매핑되지 않을 때 사용. */
+export const FALLBACK_DIMENSION = "C6";
 
 export const DIMENSION_INFO = {
-  D1: {
-    code: "D1",
-    name: "출처 권위성",
-    short: "Authority",
-    framework: "CRAAP · SIFT-Investigate",
-    description: "작성자·매체·기관의 신뢰성",
+  C1: {
+    code: "C1",
+    name: "공정성·균형",
+    short: "Fairness & Balance",
+    framework: "IFCN 강령 1 — 초당파성과 공정성",
+    description: "다양한 입장 균형, 자극적 어휘 자제, 의견-사실 구분",
   },
-  D2: {
-    code: "D2",
-    name: "내용 정확성",
-    short: "Accuracy",
-    framework: "CRAAP · FEVER-Verdict",
-    description: "사실 검증 가능 여부",
+  C2: {
+    code: "C2",
+    name: "근거·자료의 투명성",
+    short: "Source Transparency",
+    framework: "IFCN 강령 2 — 자료 출처의 투명성",
+    description: "출처·인용·데이터의 추적 가능성과 외부 교차검증",
   },
-  D3: {
-    code: "D3",
-    name: "시의성",
-    short: "Currency",
-    framework: "CRAAP",
-    description: "정보의 최신성·유효성",
+  C3: {
+    code: "C3",
+    name: "출처·작성자의 투명성",
+    short: "Author/Org Transparency",
+    framework: "IFCN 강령 3 — 재원·조직의 투명성",
+    description: "작성자·매체의 자격·이력·이해관계 공개",
   },
-  D4: {
-    code: "D4",
-    name: "근거 제시",
-    short: "Evidence",
-    framework: "FEVER-Retrieval · SIFT-Trace",
-    description: "출처·인용·데이터 제시 정도",
+  C4: {
+    code: "C4",
+    name: "검증된 방법과 증거",
+    short: "Methodology & Evidence",
+    framework: "IFCN 강령 4 — 방법론의 투명성",
+    description: "사실 정확성, 통계 산출 방식, 추론 과정의 명시",
   },
-  D5: {
-    code: "D5",
-    name: "편향성·목적",
-    short: "Bias",
-    framework: "CRAAP · IFCN",
-    description: "편향·의도·광고성",
-  },
-  D6: {
-    code: "D6",
-    name: "언어 건전성",
-    short: "Language",
-    framework: "IFCN",
-    description: "선정성·감정 자극·클릭베이트",
-  },
-  D7: {
-    code: "D7",
-    name: "검증 가능성",
-    short: "Verifiability",
-    framework: "FEVER · IFCN",
-    description: "교차검증 가능 여부",
+  C5: {
+    code: "C5",
+    name: "정정 가능성과 시의성",
+    short: "Correction & Currency",
+    framework: "IFCN 강령 5 — 개방성과 정직한 수정",
+    description: "발행 시점·최신성·정정 정책의 명시 여부",
   },
 };
 
@@ -196,7 +190,7 @@ export function teacherImplicitWeights(teacherDimsList) {
   return w;
 }
 
-/** 수렴도 = 1 - ||W_student - W_teacher_implicit|| / √7. 0~1. */
+/** 수렴도 = 1 - ||W_student - W_teacher_implicit|| / √n. 0~1. (n = 차원 수 = 5) */
 export function convergenceScore(studentWeights, teacherImplicit) {
   let sq = 0;
   for (const d of DIMENSIONS) {
@@ -207,7 +201,11 @@ export function convergenceScore(studentWeights, teacherImplicit) {
   return Math.max(0, 1 - Math.sqrt(sq) / Math.sqrt(DIMENSIONS.length));
 }
 
-/** 50점 만점 환산. dimensionScores가 1~5라면 결과는 0~50. */
+/**
+ * 50점 만점 환산.
+ *  - 가중평균 (Σμ_i × score_i)는 1~5 사이 값. ×10 하면 10~50.
+ *  - 균등 가중치(μ=0.2)와 동일 점수일 때, "합산 ÷ 5 × 10 = 합산 × 2" 식과 정확히 일치.
+ */
 export function computeFinalScore(weights, dimensionScores) {
   let sum = 0;
   let weightUsed = 0;
@@ -245,8 +243,8 @@ export function confidenceInterval95(score, variance) {
 
 /**
  * 누적 격차 패턴으로부터 메타인지 피드백 카드 생성.
- * - 평균 |gap| > 0.5: 체계적 편향 (over/under)
- * - 분산 > 1.0: 기준 일관성 부족
+ *  - 평균 |gap| > 0.5: 체계적 편향 (over/under)
+ *  - 분산 > 1.0: 기준 일관성 부족
  */
 export function generateFeedbackCards(gapHistory) {
   const cards = [];
@@ -308,4 +306,46 @@ export function weightsToArray(weights) {
     mu: weights?.[d]?.mu ?? 1 / DIMENSIONS.length,
     sigma: weights?.[d]?.sigma ?? INITIAL_SIGMA,
   }));
+}
+
+/* ============================================================
+ * v1(HPFM, D1~D7) 데이터 마이그레이션 헬퍼
+ * 교사용 체크리스트 v2.0 문서 기준 변환식:
+ *   C1 = (D5 + D6) / 2     // 편향 + 언어 → 공정성·균형
+ *   C2 = (D4 + D7) / 2     // 근거 + 검증 가능성 → 자료 투명성
+ *   C3 = D1                // 출처 권위성 → 출처·작성자 투명성
+ *   C4 = D2                // 내용 정확성 → 방법·증거
+ *   C5 = D3                // 시의성 → 정정·시의성
+ * ============================================================ */
+const LEGACY_TO_NEW = {
+  D1: ["C3"],
+  D2: ["C4"],
+  D3: ["C5"],
+  D4: ["C2"],
+  D5: ["C1"],
+  D6: ["C1"],
+  D7: ["C2"],
+  D8: ["C6"],
+};
+
+/** v1 차원 점수(D1~D7)를 v2 차원 점수(C1~C5)로 변환. */
+export function migrateLegacyDimensionScores(legacyDims) {
+  if (!legacyDims) return makeNullDimMap();
+  const sums = {};
+  const counts = {};
+  for (const [legacy, score] of Object.entries(legacyDims)) {
+    if (!Number.isFinite(Number(score))) continue;
+    const targets = LEGACY_TO_NEW[legacy];
+    if (!targets) continue;
+    for (const t of targets) {
+      if (!DIMENSIONS.includes(t)) continue;
+      sums[t] = (sums[t] ?? 0) + Number(score);
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
+  }
+  const out = makeNullDimMap();
+  for (const d of DIMENSIONS) {
+    out[d] = counts[d] ? sums[d] / counts[d] : null;
+  }
+  return out;
 }

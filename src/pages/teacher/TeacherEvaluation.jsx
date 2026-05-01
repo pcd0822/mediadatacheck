@@ -11,10 +11,33 @@ import {
 import { DIMENSION_INFO, aggregateToDimensions } from "../../utils/hpfm.js";
 import { ensureItemMappings } from "../../utils/mappingCache.js";
 
+// IFCN 5대 강령 기반 기본 평가 항목 (IPFM v2.0)
 const DEFAULT_ITEMS = [
-  { question: "출처가 명확하게 표시되어 있는가?", score: 3 },
-  { question: "근거가 되는 자료(데이터·사례)가 제시되었는가?", score: 3 },
-  { question: "다른 시각이나 반론이 함께 다뤄졌는가?", score: 3 },
+  {
+    question: "다양한 입장을 균형 있게 다루며 자극적 어휘로 감정을 흔들지 않는가?",
+    score: 3,
+    ifcn_principle: "초당파성과 공정성",
+  },
+  {
+    question: "주요 주장에 출처와 근거가 충분하고, 독자가 직접 추적·교차검증할 수 있는가?",
+    score: 3,
+    ifcn_principle: "자료 출처의 투명성",
+  },
+  {
+    question: "작성자·매체가 누구이며 자격과 이해관계가 투명하게 공개되어 있는가?",
+    score: 3,
+    ifcn_principle: "재원·조직의 투명성",
+  },
+  {
+    question: "사실 진술이 검증 가능하며, 결론에 도달한 방법이 투명하게 설명되어 있는가?",
+    score: 3,
+    ifcn_principle: "방법론의 투명성",
+  },
+  {
+    question: "발행 시점이 명확하고 정보가 현재에도 유효하며 정정 정책이 공개되어 있는가?",
+    score: 3,
+    ifcn_principle: "개방성과 정직한 수정",
+  },
 ];
 
 export default function TeacherEvaluation() {
@@ -120,7 +143,7 @@ export default function TeacherEvaluation() {
           <Button variant="secondary" onClick={addItem}>+ 항목 추가</Button>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          저장 시 각 질문은 7대 차원(D1~D7)으로 자동 분류되어 학생 모델 학습의 기준이 됩니다.
+          저장 시 각 질문은 IFCN 5대 차원(C1~C5)으로 자동 분류되어 학생 모델 학습의 기준이 됩니다.
         </p>
         <div className="space-y-3">
           {items.map((it, idx) => (
@@ -136,11 +159,16 @@ export default function TeacherEvaluation() {
                   <span className="mt-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                     {it.dimension} · {DIMENSION_INFO[it.dimension].name}
                   </span>
-                ) : it.dimension === "D8" ? (
+                ) : it.dimension === "C6" ? (
                   <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
-                    D8 · 사용자 정의
+                    C6 · 사용자 정의
                   </span>
                 ) : null}
+                {it.ifcn_principle && (
+                  <span className="ml-1 mt-1 inline-block rounded-full bg-brand-50 px-2 py-0.5 text-[10px] text-brand-700">
+                    IFCN: {it.ifcn_principle}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <input

@@ -18,7 +18,7 @@ const STEPS = [
     icon: "format_list_bulleted",
     bigIcon: "format_list_bulleted",
     title: "체크리스트 만들기",
-    desc: "팩트체크 질문과 1~5점 루브릭을 직접 설계합니다 (저장 시 7대 차원 자동 분류).",
+    desc: "팩트체크 질문과 1~5점 루브릭을 직접 설계합니다 (저장 시 IFCN 5대 차원 자동 분류).",
     cta: "체크리스트 작성",
     path: "/student/checklist",
     accent: "brand",
@@ -28,7 +28,7 @@ const STEPS = [
     index: "02",
     icon: "model_training",
     bigIcon: "cognition",
-    title: "알고리즘 모델링 (HPFM)",
+    title: "알고리즘 모델링 (IPFM)",
     desc: "선생님이 등록한 미디어를 평가해 베이지안 가중치(μ, σ)를 학습시킵니다.",
     cta: "모델링 시작",
     path: "/student/modeling",
@@ -40,7 +40,7 @@ const STEPS = [
     icon: "verified",
     bigIcon: "verified",
     title: "미디어 팩트체크",
-    desc: "Gemini 7대 차원 평가 + 내 모델로 50점 환산 (신뢰구간 포함).",
+    desc: "Gemini IFCN 5대 차원 평가 + 내 모델로 50점 환산 (신뢰구간 포함).",
     cta: "팩트체크 실행",
     path: "/student/factcheck",
     accent: "orange",
@@ -132,7 +132,7 @@ export default function StudentDashboard() {
               value={convergencePct}
               tone="emerald"
               icon="trending_up"
-              tag={model?.version ?? "HPFM-1.0"}
+              tag={model?.version ?? "IPFM-2.0"}
               tagTone="slate"
             />
             <StatCard
@@ -151,7 +151,7 @@ export default function StudentDashboard() {
               <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
                 <div>
                   <h3 className="font-display text-xl font-bold tracking-tight text-ink">
-                    7대 차원 가중치 (HPFM)
+                    IFCN 5대 차원 가중치 (IPFM)
                   </h3>
                   <p className="mt-1 text-xs text-ink-muted">
                     베이지안 평균 μ를 100% 정규화한 막대그래프입니다.
@@ -286,7 +286,10 @@ export default function StudentDashboard() {
                   #비판적사고
                 </span>
                 <span className="rounded-full bg-white/20 px-3 py-1 text-xs backdrop-blur-sm">
-                  #HPFM
+                  #IPFM
+                </span>
+                <span className="rounded-full bg-white/20 px-3 py-1 text-xs backdrop-blur-sm">
+                  #IFCN
                 </span>
               </div>
             </div>

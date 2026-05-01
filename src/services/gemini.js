@@ -1,5 +1,5 @@
 /**
- * Netlify Function 프록시 호출 (HPFM 두 가지 모드).
+ * Netlify Function 프록시 호출 (IPFM v2.0 두 가지 모드).
  * 개발 시 vite.config.js의 proxy 설정으로 8888 포트를 통해 호출됨.
  */
 const ENDPOINT = "/.netlify/functions/gemini";
@@ -16,7 +16,7 @@ async function postJson(payload) {
 }
 
 /**
- * 체크리스트 항목 → 7대 차원(D1~D7, 미분류는 D8) 매핑.
+ * 체크리스트 항목 → IFCN 5대 차원(C1~C5, 미분류는 C6) 매핑.
  * @param {Array<{question:string}>} items
  * @returns {Promise<Array<{dimension:string, confidence:number, reason:string}>>}
  */
@@ -27,9 +27,9 @@ export async function mapChecklistItems(items) {
 }
 
 /**
- * 미디어 자료를 7대 차원으로 1~5점 평가.
+ * 미디어 자료를 IFCN 5대 차원으로 1~5점 평가.
  * @param {{title:string, content:string, link?:string}} media
- * @returns {Promise<Record<"D1"|"D2"|"D3"|"D4"|"D5"|"D6"|"D7", {score:number, reason:string}>>}
+ * @returns {Promise<Record<"C1"|"C2"|"C3"|"C4"|"C5", {score:number, reason:string}>>}
  */
 export async function evaluateMediaDimensions(media) {
   const data = await postJson({ mode: "evaluate", media });

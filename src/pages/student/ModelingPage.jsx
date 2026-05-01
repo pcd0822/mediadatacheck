@@ -226,8 +226,8 @@ export default function ModelingPage() {
 
   return (
     <Layout
-      title="알고리즘 모델링 (HPFM)"
-      subtitle="학생 vs 교사 차원별 격차로 가중치를 베이지안 점진 갱신합니다"
+      title="알고리즘 모델링 (IPFM)"
+      subtitle="학생 vs 교사 차원별 격차로 IFCN 5대 차원 가중치를 베이지안 점진 갱신합니다"
       actions={
         <>
           <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>

@@ -185,8 +185,8 @@ export default function ChecklistEditor() {
                       <span className="badge bg-emerald-50 text-emerald-700">
                         {it.dimension} · {DIMENSION_INFO[it.dimension].name}
                       </span>
-                    ) : it.dimension === "D8" ? (
-                      <span className="badge bg-slate-100 text-slate-600">D8 · 사용자 정의</span>
+                    ) : it.dimension === "C6" ? (
+                      <span className="badge bg-slate-100 text-slate-600">C6 · 사용자 정의</span>
                     ) : (
                       <span className="badge bg-amber-50 text-amber-700">저장 시 자동 분류</span>
                     )}
