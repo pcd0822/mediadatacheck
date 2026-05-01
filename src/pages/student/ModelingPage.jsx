@@ -14,6 +14,7 @@ import {
   replaceFeedbackCards,
   saveAlgorithmModel,
   saveStudentEvaluation,
+  updateChecklist,
 } from "../../services/firestore.js";
 import {
   DIMENSION_INFO,
@@ -25,10 +26,13 @@ import {
   generateFeedbackCards,
   initialWeights,
   isColdStart,
+  isLegacyDimMap,
   learningRate,
+  migrateLegacyDimensionScores,
   teacherImplicitWeights,
   weightsToArray,
 } from "../../utils/hpfm.js";
+import { ensureItemMappings } from "../../utils/mappingCache.js";
 
 export default function ModelingPage() {
   const { user } = useAuth();
@@ -41,6 +45,7 @@ export default function ModelingPage() {
   const [training, setTraining] = useState(false);
   const [model, setModel] = useState(null);
   const [detailMedia, setDetailMedia] = useState(null);
+  const [justFinished, setJustFinished] = useState(false);
 
   const activeChecklist = useMemo(
     () => checklists.find((c) => c.id === activeChecklistId) ?? null,
@@ -82,11 +87,17 @@ export default function ModelingPage() {
   }, [activeChecklistId, media, user]);
 
   const setScore = (mediaId, idx, value) => {
+    setJustFinished(false);
     setScoresByMedia((prev) => {
       const cur = prev[mediaId] ? [...prev[mediaId]] : [];
       cur[idx] = Number(value);
       return { ...prev, [mediaId]: cur };
     });
+  };
+
+  const handleSelectChecklist = (id) => {
+    setJustFinished(false);
+    setActiveChecklistId(id);
   };
 
   const evaluatedCount = useMemo(() => {
@@ -118,17 +129,29 @@ export default function ModelingPage() {
     }
     setTraining(true);
     try {
+      // v1 잔재 dimension(D1~D7)이 남아있으면 자동 재매핑하여 저장
+      const refreshedItems = await ensureItemMappings(activeChecklist.items);
+      const itemsChanged =
+        JSON.stringify(refreshedItems) !== JSON.stringify(activeChecklist.items);
+      if (itemsChanged) {
+        await updateChecklist(user.uid, activeChecklistId, { items: refreshedItems });
+      }
+      const checklistItems = refreshedItems;
+
       const pairs = [];
       for (const m of media) {
         const arr = scoresByMedia[m.id];
         if (!arr || arr.length === 0) continue;
-        const studentDims = aggregateToDimensions(activeChecklist.items, arr);
+        const studentDims = aggregateToDimensions(checklistItems, arr);
         await saveStudentEvaluation(m.id, user.uid, {
           items: arr,
           checklistId: activeChecklistId,
           dimensionScores: studentDims,
         });
-        const teacherDims = m.teacherEvaluation?.dimensionScores;
+        const rawTeacherDims = m.teacherEvaluation?.dimensionScores;
+        const teacherDims = isLegacyDimMap(rawTeacherDims)
+          ? migrateLegacyDimensionScores(rawTeacherDims)
+          : rawTeacherDims;
         if (teacherDims) pairs.push({ studentDims, teacherDims, mediaId: m.id });
       }
 
@@ -151,7 +174,11 @@ export default function ModelingPage() {
       }
 
       const teacherDimsList = media
-        .map((m) => m.teacherEvaluation?.dimensionScores)
+        .map((m) => {
+          const raw = m.teacherEvaluation?.dimensionScores;
+          if (!raw) return null;
+          return isLegacyDimMap(raw) ? migrateLegacyDimensionScores(raw) : raw;
+        })
         .filter(Boolean);
       const teacherImplicit = teacherImplicitWeights(teacherDimsList);
       const conv = convergenceScore(weights, teacherImplicit);
@@ -183,6 +210,7 @@ export default function ModelingPage() {
       };
       await saveAlgorithmModel(user.uid, trained);
       setModel(trained);
+      setJustFinished(true);
     } catch (e) {
       console.error(e);
       alert(`학습 중 오류: ${e.message}`);
@@ -236,12 +264,78 @@ export default function ModelingPage() {
       actions={
         <>
           <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>
-          <Button variant="primary" onClick={handleTrain} loading={training}>
-            저장하고 기준 다듬기
-          </Button>
+          {justFinished ? (
+            <Button
+              variant="secondary"
+              onClick={handleTrain}
+              loading={training}
+              className="!bg-emerald-50 !text-emerald-700 !border !border-emerald-200"
+            >
+              ✓ 다듬기 완료 (다시 다듬기)
+            </Button>
+          ) : (
+            <Button variant="primary" onClick={handleTrain} loading={training}>
+              저장하고 기준 다듬기
+            </Button>
+          )}
         </>
       }
     >
+      {/* === 상단: 학습 결과 + 팩트체크 실행 === */}
+      {model?.weights && (
+        <div className="card mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-base font-bold text-slate-900">내가 중요하게 보는 5가지 기준</h3>
+            {model.convergenceScore != null && (
+              <span className="badge bg-brand-50 text-brand-700">
+                내 기준 자리잡힌 정도 {(model.convergenceScore * 100).toFixed(0)}%
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            막대 길이 = 그 기준을 얼마나 중요하게 보는지. 평가가 쌓일수록 안정돼요.
+          </p>
+          <div className="mt-3 space-y-2">
+            {weightsToArray(model.weights).map((w) => (
+              <div key={w.code} className="flex items-center gap-3">
+                <span className="w-44 truncate text-sm text-slate-700">
+                  {w.name}
+                </span>
+                <div className="flex-1">
+                  <div className="h-2 w-full rounded-full bg-slate-100">
+                    <div
+                      className="h-2 rounded-full bg-brand-500 transition-all duration-700"
+                      style={{ width: `${w.mu * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <span className="w-16 text-right text-sm font-semibold text-brand-700">
+                  {(w.mu * 100).toFixed(1)}%
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            {justFinished ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                  check_circle
+                </span>
+                기준 다듬기 완료! 새 기준이 막대그래프에 반영되었어요.
+              </span>
+            ) : (
+              <span className="text-[11px] text-slate-500">
+                미디어 평가를 마친 뒤 위쪽 "저장하고 기준 다듬기" 버튼을 누르면 막대가 갱신돼요.
+              </span>
+            )}
+            <Button variant="primary" onClick={() => navigate("/student/factcheck")}>
+              팩트체크 실행하기 →
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* === 체크리스트 선택 + 진행 단계 === */}
       <div className="card mb-4">
         <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
           <div>
@@ -249,7 +343,7 @@ export default function ModelingPage() {
             <select
               className="input"
               value={activeChecklistId ?? ""}
-              onChange={(e) => setActiveChecklistId(e.target.value)}
+              onChange={(e) => handleSelectChecklist(e.target.value)}
             >
               {checklists.map((cl) => (
                 <option key={cl.id} value={cl.id}>{cl.checklistName} (항목 {cl.items?.length ?? 0}개)</option>
@@ -267,6 +361,7 @@ export default function ModelingPage() {
         </div>
       </div>
 
+      {/* === 미디어별 평가 영역 === */}
       <div className="space-y-4">
         {media.map((m) => (
           <MediaEvaluator
@@ -285,47 +380,6 @@ export default function ModelingPage() {
         open={!!detailMedia}
         onClose={() => setDetailMedia(null)}
       />
-
-      {model?.weights && (
-        <div className="card mt-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-slate-900">내가 중요하게 보는 5가지 기준</h3>
-            {Number.isFinite(model.convergenceScore) && (
-              <span className="badge bg-brand-50 text-brand-700">
-                내 기준 자리잡힌 정도 {(model.convergenceScore * 100).toFixed(0)}%
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-slate-500">
-            막대 길이 = 그 기준을 얼마나 중요하게 보는지. 평가가 쌓일수록 안정돼요.
-          </p>
-          <div className="mt-3 space-y-2">
-            {weightsToArray(model.weights).map((w) => (
-              <div key={w.code} className="flex items-center gap-3">
-                <span className="w-44 truncate text-sm text-slate-700">
-                  {w.name}
-                </span>
-                <div className="flex-1">
-                  <div className="h-2 w-full rounded-full bg-slate-100">
-                    <div
-                      className="h-2 rounded-full bg-brand-500"
-                      style={{ width: `${w.mu * 100}%` }}
-                    />
-                  </div>
-                </div>
-                <span className="w-16 text-right text-sm font-semibold text-brand-700">
-                  {(w.mu * 100).toFixed(1)}%
-                </span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 flex justify-end">
-            <Button variant="primary" onClick={() => navigate("/student/factcheck")}>
-              팩트체크 실행하기 →
-            </Button>
-          </div>
-        </div>
-      )}
     </Layout>
   );
 }

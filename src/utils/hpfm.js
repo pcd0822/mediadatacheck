@@ -81,18 +81,27 @@ export function bayesianActive(trainingDataCount = 0) {
   return trainingDataCount >= 5;
 }
 
-/** 체크리스트 항목별 점수를 차원별 평균으로 집계. */
+/**
+ * 체크리스트 항목별 점수를 차원별 평균으로 집계.
+ * v1 잔재 코드(D1~D7, D8)는 LEGACY_TO_NEW로 자동 변환하여 누적.
+ */
 export function aggregateToDimensions(items, scoresByIndex) {
   const sums = {};
   const counts = {};
   if (!items || !scoresByIndex) return makeNullDimMap();
   for (let i = 0; i < items.length; i += 1) {
-    const dim = items[i]?.dimension;
-    if (!DIMENSIONS.includes(dim)) continue;
+    const rawDim = items[i]?.dimension;
     const v = Number(scoresByIndex[i]);
     if (!Number.isFinite(v)) continue;
-    sums[dim] = (sums[dim] ?? 0) + v;
-    counts[dim] = (counts[dim] ?? 0) + 1;
+    const targets = DIMENSIONS.includes(rawDim)
+      ? [rawDim]
+      : LEGACY_TO_NEW[rawDim] ?? null;
+    if (!targets) continue;
+    for (const dim of targets) {
+      if (!DIMENSIONS.includes(dim)) continue;
+      sums[dim] = (sums[dim] ?? 0) + v;
+      counts[dim] = (counts[dim] ?? 0) + 1;
+    }
   }
   const out = makeNullDimMap();
   for (const d of DIMENSIONS) {
@@ -190,15 +199,34 @@ export function teacherImplicitWeights(teacherDimsList) {
   return w;
 }
 
-/** 수렴도 = 1 - ||W_student - W_teacher_implicit|| / √n. 0~1. (n = 차원 수 = 5) */
+/**
+ * 수렴도 = 1 - ||W_student - W_teacher_implicit|| / √n. 0~1.
+ * 학생/교사 가중치가 모두 균등(미학습 상태)이면 의미 있는 값이 아니므로 null 반환.
+ */
 export function convergenceScore(studentWeights, teacherImplicit) {
+  const uniform = 1 / DIMENSIONS.length;
+  const epsilon = 1e-6;
+  const studentIsUniform = DIMENSIONS.every(
+    (d) => Math.abs((studentWeights?.[d]?.mu ?? uniform) - uniform) < epsilon
+  );
+  const teacherIsUniform = DIMENSIONS.every(
+    (d) => Math.abs((teacherImplicit?.[d] ?? uniform) - uniform) < epsilon
+  );
+  if (studentIsUniform && teacherIsUniform) return null;
+
   let sq = 0;
   for (const d of DIMENSIONS) {
-    const sw = studentWeights?.[d]?.mu ?? 1 / DIMENSIONS.length;
-    const tw = teacherImplicit?.[d] ?? 1 / DIMENSIONS.length;
+    const sw = studentWeights?.[d]?.mu ?? uniform;
+    const tw = teacherImplicit?.[d] ?? uniform;
     sq += (sw - tw) ** 2;
   }
   return Math.max(0, 1 - Math.sqrt(sq) / Math.sqrt(DIMENSIONS.length));
+}
+
+/** dimensionScores 객체에 v1 차원 키(D1~D8)가 있는지. */
+export function isLegacyDimMap(dims) {
+  if (!dims || typeof dims !== "object") return false;
+  return Object.keys(dims).some((k) => /^D[1-8]$/.test(k));
 }
 
 /**
