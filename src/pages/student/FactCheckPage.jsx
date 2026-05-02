@@ -293,10 +293,11 @@ function TeacherMediaCard({ item, onClick }) {
         <img
           src={item.thumbnailUrl}
           alt=""
-          className="h-36 w-full object-cover"
+          className="w-full bg-slate-50 object-contain"
+          style={{ maxHeight: "1080px" }}
         />
       ) : (
-        <div className="grid h-36 w-full place-items-center bg-slate-100 text-xs text-slate-400">
+        <div className="grid h-56 w-full place-items-center bg-slate-100 text-xs text-slate-400">
           썸네일 없음
         </div>
       )}

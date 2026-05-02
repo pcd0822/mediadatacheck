@@ -137,7 +137,12 @@ export default function TeacherEvaluation() {
           <p className="mt-1 text-4xl font-bold text-brand-700">{totalScore.toFixed(1)}<span className="text-base text-slate-400">/50</span></p>
           {savedAt && <p className="mt-2 text-xs text-emerald-600">저장됨 · {savedAt.toLocaleTimeString()}</p>}
           {media.thumbnailUrl && (
-            <img src={media.thumbnailUrl} alt="" className="mt-4 w-full rounded-xl object-cover" />
+            <img
+              src={media.thumbnailUrl}
+              alt=""
+              className="mt-4 w-full rounded-xl object-contain"
+              style={{ maxWidth: "1092px", maxHeight: "1080px" }}
+            />
           )}
         </div>
       </div>

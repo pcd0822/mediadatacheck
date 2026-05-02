@@ -53,6 +53,13 @@ export default function TeacherMediaUpload() {
     setThumbFile(file);
     setPreview(URL.createObjectURL(file));
     setRemoveThumb(false);
+    if (file.size > 10 * 1024 * 1024) {
+      setError(
+        `이미지가 ${(file.size / 1024 / 1024).toFixed(1)}MB로 너무 커요. 10MB 이하로 압축한 뒤 다시 선택해주세요.`
+      );
+    } else {
+      setError("");
+    }
   };
 
   const handleRemoveThumb = () => {
@@ -155,15 +162,23 @@ export default function TeacherMediaUpload() {
           <label className="label">썸네일 이미지</label>
           <input type="file" accept="image/*" onChange={onFile} />
           {thumbToShow ? (
-            <div className="mt-3 flex items-start gap-3">
+            <div className="mt-3 flex flex-col items-start gap-3">
               <img
                 src={thumbToShow}
                 alt=""
-                className="h-32 w-48 rounded-xl object-cover ring-1 ring-slate-200"
+                className="rounded-xl object-contain ring-1 ring-slate-200"
+                style={{ maxWidth: "1092px", maxHeight: "1080px", width: "100%", height: "auto" }}
               />
-              <Button type="button" variant="ghost" onClick={handleRemoveThumb}>
-                썸네일 제거
-              </Button>
+              <div className="flex items-center gap-3">
+                {thumbFile && (
+                  <p className="text-xs text-slate-500">
+                    {thumbFile.name} · {(thumbFile.size / 1024 / 1024).toFixed(2)}MB
+                  </p>
+                )}
+                <Button type="button" variant="ghost" onClick={handleRemoveThumb}>
+                  썸네일 제거
+                </Button>
+              </div>
             </div>
           ) : (
             isEdit && (

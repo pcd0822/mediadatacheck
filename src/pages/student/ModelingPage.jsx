@@ -399,9 +399,14 @@ function MediaEvaluator({ media, checklist, scores, onChange, onOpenDetail }) {
         aria-label={`${media.title} 상세 보기`}
       >
         {media.thumbnailUrl ? (
-          <img src={media.thumbnailUrl} alt="" className="h-24 w-32 rounded-xl object-cover" />
+          <img
+            src={media.thumbnailUrl}
+            alt=""
+            className="w-48 rounded-xl object-contain ring-1 ring-slate-100"
+            style={{ maxHeight: "1080px" }}
+          />
         ) : (
-          <div className="grid h-24 w-32 place-items-center rounded-xl bg-slate-100 text-xs text-slate-400">
+          <div className="grid h-32 w-48 place-items-center rounded-xl bg-slate-100 text-xs text-slate-400">
             No Thumb
           </div>
         )}
@@ -511,7 +516,8 @@ function MediaDetailDrawer({ media, open, onClose }) {
                 <img
                   src={media.thumbnailUrl}
                   alt=""
-                  className="w-full rounded-xl object-cover ring-1 ring-slate-200"
+                  className="w-full rounded-xl object-contain ring-1 ring-slate-200"
+                  style={{ maxHeight: "1080px" }}
                 />
               ) : (
                 <div className="grid h-44 w-full place-items-center rounded-xl bg-slate-100 text-sm text-slate-400">

@@ -66,10 +66,11 @@ export default function TeacherDashboard() {
                   <img
                     src={m.thumbnailUrl}
                     alt=""
-                    className="h-28 w-full rounded-xl object-cover sm:w-44"
+                    className="w-full rounded-xl object-contain ring-1 ring-slate-100 sm:w-72"
+                    style={{ maxHeight: "1080px" }}
                   />
                 ) : (
-                  <div className="grid h-28 w-full place-items-center rounded-xl bg-slate-100 text-slate-400 sm:w-44">
+                  <div className="grid h-44 w-full place-items-center rounded-xl bg-slate-100 text-slate-400 sm:w-72">
                     No Thumbnail
                   </div>
                 )}
