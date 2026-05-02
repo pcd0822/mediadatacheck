@@ -9,6 +9,7 @@ import {
   getChecklist,
   listChecklists,
   listFactCheckHistory,
+  listMediaItems,
   saveFactCheckHistory,
 } from "../../services/firestore.js";
 import { evaluateMediaDimensions } from "../../services/gemini.js";
@@ -32,18 +33,21 @@ export default function FactCheckPage() {
   const [error, setError] = useState("");
   const [form, setForm] = useState({ title: "", content: "", link: "" });
   const [history, setHistory] = useState([]);
+  const [teacherMedia, setTeacherMedia] = useState([]);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const [cls, m, hist] = await Promise.all([
+      const [cls, m, hist, tm] = await Promise.all([
         listChecklists(user.uid),
         getAlgorithmModel(user.uid),
         listFactCheckHistory(user.uid),
+        listMediaItems(),
       ]);
       setChecklists(cls);
       setModel(m);
       setHistory(hist);
+      setTeacherMedia(tm);
       const initial = m?.checklistId && cls.find((c) => c.id === m.checklistId)
         ? m.checklistId
         : cls[0]?.id ?? null;
@@ -53,6 +57,18 @@ export default function FactCheckPage() {
   }, [user]);
 
   const onChange = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const fillFromTeacher = (m) => {
+    setForm({
+      title: m.title ?? "",
+      content: m.content ?? "",
+      link: m.link ?? "",
+    });
+    setError("");
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
 
   const handleRun = async () => {
     setError("");
@@ -202,6 +218,38 @@ export default function FactCheckPage() {
       <section className="mt-8">
         <div className="mb-3 flex items-end justify-between">
           <div>
+            <h2 className="text-lg font-bold text-slate-900">선생님이 올린 미디어</h2>
+            <p className="text-xs text-slate-500">
+              카드를 클릭하면 위 폼에 자동으로 채워져요. 그대로 팩트체크를 실행해보세요.
+            </p>
+          </div>
+          {teacherMedia.length > 0 && (
+            <span className="badge bg-brand-50 text-brand-700">
+              총 {teacherMedia.length}건
+            </span>
+          )}
+        </div>
+
+        {teacherMedia.length === 0 ? (
+          <div className="card text-center text-sm text-slate-500">
+            아직 선생님이 올린 미디어가 없어요.
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {teacherMedia.map((m) => (
+              <TeacherMediaCard
+                key={m.id}
+                item={m}
+                onClick={() => fillFromTeacher(m)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-8">
+        <div className="mb-3 flex items-end justify-between">
+          <div>
             <h2 className="text-lg font-bold text-slate-900">내가 등록한 미디어</h2>
             <p className="text-xs text-slate-500">
               지금까지 팩트체크한 자료들이에요. 카드를 클릭하면 결과 화면으로 이동합니다.
@@ -231,6 +279,42 @@ export default function FactCheckPage() {
 
       {running && <LoadingOverlay message="AI 친구가 5대 검증 행동으로 미디어를 살펴보고 있어요..." />}
     </Layout>
+  );
+}
+
+function TeacherMediaCard({ item, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group card flex h-full flex-col gap-3 overflow-hidden p-0 text-left transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+    >
+      {item.thumbnailUrl ? (
+        <img
+          src={item.thumbnailUrl}
+          alt=""
+          className="h-36 w-full object-cover"
+        />
+      ) : (
+        <div className="grid h-36 w-full place-items-center bg-slate-100 text-xs text-slate-400">
+          썸네일 없음
+        </div>
+      )}
+      <div className="flex flex-1 flex-col gap-2 p-4 pt-2">
+        <h3 className="line-clamp-2 text-sm font-bold text-slate-900 group-hover:text-brand-700">
+          {item.title || "(제목 없음)"}
+        </h3>
+        <p className="line-clamp-3 text-xs leading-5 text-slate-600">
+          {item.content || ""}
+        </p>
+        <div className="mt-auto flex items-center justify-between text-[11px] text-slate-400">
+          <span>선생님 자료</span>
+          <span className="font-semibold text-brand-600 group-hover:underline">
+            폼에 가져오기 →
+          </span>
+        </div>
+      </div>
+    </button>
   );
 }
 

@@ -45,6 +45,14 @@ export default function App() {
         }
       />
       <Route
+        path="/teacher/edit/:mediaId"
+        element={
+          <ProtectedRoute role="teacher">
+            <TeacherMediaUpload />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/teacher/evaluate/:mediaId"
         element={
           <ProtectedRoute role="teacher">

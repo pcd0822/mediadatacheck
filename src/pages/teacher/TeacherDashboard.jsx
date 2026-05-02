@@ -102,6 +102,12 @@ export default function TeacherDashboard() {
                     >
                       팩트체크 평가
                     </Link>
+                    <Link
+                      to={`/teacher/edit/${m.id}`}
+                      className="btn-secondary"
+                    >
+                      자료 수정
+                    </Link>
                     <Button
                       variant="danger"
                       onClick={() => handleDelete(m.id)}

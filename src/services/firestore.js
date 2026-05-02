@@ -38,6 +38,19 @@ export async function getMediaItem(mediaId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
+export async function updateMediaItem(mediaId, data) {
+  const patch = {
+    title: data.title,
+    content: data.content,
+    link: data.link ?? "",
+    updatedAt: serverTimestamp(),
+  };
+  if (data.thumbnailUrl !== undefined) {
+    patch.thumbnailUrl = data.thumbnailUrl;
+  }
+  await updateDoc(doc(db, "media_items", mediaId), patch);
+}
+
 export async function deleteMediaItem(mediaId) {
   await deleteDoc(doc(db, "media_items", mediaId));
 }

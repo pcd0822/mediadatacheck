@@ -1,27 +1,65 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
+import LoadingOverlay from "../../components/Loading/LoadingOverlay.jsx";
 import { useAuth } from "../../contexts/AuthContext.jsx";
-import { createMediaItem } from "../../services/firestore.js";
+import {
+  createMediaItem,
+  getMediaItem,
+  updateMediaItem,
+} from "../../services/firestore.js";
 import { uploadThumbnail } from "../../services/storage.js";
 
 export default function TeacherMediaUpload() {
   const navigate = useNavigate();
+  const { mediaId } = useParams();
+  const isEdit = Boolean(mediaId);
   const { user } = useAuth();
   const [form, setForm] = useState({ title: "", content: "", link: "" });
   const [thumbFile, setThumbFile] = useState(null);
   const [preview, setPreview] = useState("");
+  const [existingThumbUrl, setExistingThumbUrl] = useState("");
+  const [removeThumb, setRemoveThumb] = useState(false);
+  const [loading, setLoading] = useState(isEdit);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const onChange = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  useEffect(() => {
+    if (!isEdit) return;
+    (async () => {
+      setLoading(true);
+      const m = await getMediaItem(mediaId);
+      if (m) {
+        setForm({
+          title: m.title ?? "",
+          content: m.content ?? "",
+          link: m.link ?? "",
+        });
+        setExistingThumbUrl(m.thumbnailUrl ?? "");
+      } else {
+        setError("자료를 찾을 수 없습니다.");
+      }
+      setLoading(false);
+    })();
+  }, [mediaId, isEdit]);
+
+  const onChange = (key) => (e) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const onFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setThumbFile(file);
     setPreview(URL.createObjectURL(file));
+    setRemoveThumb(false);
+  };
+
+  const handleRemoveThumb = () => {
+    setThumbFile(null);
+    setPreview("");
+    setExistingThumbUrl("");
+    setRemoveThumb(true);
   };
 
   const handleSubmit = async (e) => {
@@ -33,12 +71,25 @@ export default function TeacherMediaUpload() {
     }
     setSubmitting(true);
     try {
-      const thumbnailUrl = thumbFile ? await uploadThumbnail(thumbFile, user.uid) : "";
-      const mediaId = await createMediaItem(user.uid, {
-        ...form,
-        thumbnailUrl,
-      });
-      navigate(`/teacher/evaluate/${mediaId}`, { replace: true });
+      if (isEdit) {
+        const update = { ...form };
+        if (thumbFile) {
+          update.thumbnailUrl = await uploadThumbnail(thumbFile, user.uid);
+        } else if (removeThumb) {
+          update.thumbnailUrl = "";
+        }
+        await updateMediaItem(mediaId, update);
+        navigate("/teacher", { replace: true });
+      } else {
+        const thumbnailUrl = thumbFile
+          ? await uploadThumbnail(thumbFile, user.uid)
+          : "";
+        const newMediaId = await createMediaItem(user.uid, {
+          ...form,
+          thumbnailUrl,
+        });
+        navigate(`/teacher/evaluate/${newMediaId}`, { replace: true });
+      }
     } catch (err) {
       console.error(err);
       setError("저장 중 오류가 발생했습니다.");
@@ -47,10 +98,18 @@ export default function TeacherMediaUpload() {
     }
   };
 
+  if (loading) return <LoadingOverlay message="자료 불러오는 중..." />;
+
+  const thumbToShow = preview || existingThumbUrl;
+
   return (
     <Layout
-      title="미디어 자료 등록"
-      subtitle="학생들이 모델링과 팩트체크에 사용할 자료를 등록합니다"
+      title={isEdit ? "미디어 자료 수정" : "미디어 자료 등록"}
+      subtitle={
+        isEdit
+          ? "표제·본문·썸네일·링크를 수정합니다"
+          : "학생들이 모델링과 팩트체크에 사용할 자료를 등록합니다"
+      }
       actions={
         <Button variant="secondary" onClick={() => navigate("/teacher")}>
           ← 대시보드
@@ -60,7 +119,13 @@ export default function TeacherMediaUpload() {
       <form onSubmit={handleSubmit} className="card grid gap-5">
         <div>
           <label className="label" htmlFor="title">미디어 제목 *</label>
-          <input id="title" className="input" value={form.title} onChange={onChange("title")} placeholder="예) ○○ 사건 보도 기사" />
+          <input
+            id="title"
+            className="input"
+            value={form.title}
+            onChange={onChange("title")}
+            placeholder="예) ○○ 사건 보도 기사"
+          />
         </div>
 
         <div>
@@ -76,22 +141,56 @@ export default function TeacherMediaUpload() {
 
         <div>
           <label className="label" htmlFor="link">원본 링크</label>
-          <input id="link" type="url" className="input" value={form.link} onChange={onChange("link")} placeholder="https://..." />
+          <input
+            id="link"
+            type="url"
+            className="input"
+            value={form.link}
+            onChange={onChange("link")}
+            placeholder="https://..."
+          />
         </div>
 
         <div>
           <label className="label">썸네일 이미지</label>
           <input type="file" accept="image/*" onChange={onFile} />
-          {preview && (
-            <img src={preview} alt="" className="mt-3 h-32 w-48 rounded-xl object-cover ring-1 ring-slate-200" />
+          {thumbToShow ? (
+            <div className="mt-3 flex items-start gap-3">
+              <img
+                src={thumbToShow}
+                alt=""
+                className="h-32 w-48 rounded-xl object-cover ring-1 ring-slate-200"
+              />
+              <Button type="button" variant="ghost" onClick={handleRemoveThumb}>
+                썸네일 제거
+              </Button>
+            </div>
+          ) : (
+            isEdit && (
+              <p className="mt-2 text-xs text-slate-400">
+                현재 썸네일이 없습니다. 새 이미지를 선택하면 추가돼요.
+              </p>
+            )
           )}
         </div>
 
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
+        {error && (
+          <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {error}
+          </p>
+        )}
 
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => navigate("/teacher")} disabled={submitting}>취소</Button>
-          <Button type="submit" variant="primary" loading={submitting}>저장하고 평가 작성</Button>
+          <Button
+            variant="secondary"
+            onClick={() => navigate("/teacher")}
+            disabled={submitting}
+          >
+            취소
+          </Button>
+          <Button type="submit" variant="primary" loading={submitting}>
+            {isEdit ? "변경사항 저장" : "저장하고 평가 작성"}
+          </Button>
         </div>
       </form>
     </Layout>
