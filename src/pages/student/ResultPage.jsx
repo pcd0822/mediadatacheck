@@ -325,7 +325,7 @@ export default function ResultPage() {
                         </span>
                       ) : (
                         <span className="font-display text-2xl font-extrabold text-brand-600">
-                          {value}
+                          {Number(value).toFixed(1)}
                           <span className="text-base text-ink-muted">/5</span>
                         </span>
                       )}
@@ -356,7 +356,7 @@ export default function ResultPage() {
                         className="flex-1 accent-brand-600"
                       />
                       <span className="w-10 text-right text-sm font-bold text-brand-700">
-                        {value}
+                        {Number(value).toFixed(1)}
                       </span>
                     </div>
                   )}
