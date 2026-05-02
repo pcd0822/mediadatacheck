@@ -68,19 +68,34 @@ export default function FactCheckPage() {
       const dimsResult = await evaluateMediaDimensions(form);
       const dimensionScores = {};
       const dimensionReasons = {};
+      const dimensionRedFlags = {};
+      const dimensionSkipped = {};
       const fallbacks = [];
       for (const d of DIMENSIONS) {
-        const raw = Number(dimsResult[d]?.score);
-        if (Number.isFinite(raw)) {
-          dimensionScores[d] = Math.max(1, Math.min(5, Math.round(raw)));
+        const entry = dimsResult[d] ?? {};
+        if (entry.skipped === true || entry.score === null) {
+          // V4 N/A: 점수 없이 보존, 최종 점수 산출에서 자동 제외됨
+          dimensionScores[d] = null;
+          dimensionSkipped[d] = true;
         } else {
-          dimensionScores[d] = 3;
-          fallbacks.push(d);
+          const raw = Number(entry.score);
+          if (Number.isFinite(raw)) {
+            dimensionScores[d] = Math.max(1, Math.min(5, Math.round(raw)));
+          } else {
+            dimensionScores[d] = 3;
+            fallbacks.push(d);
+          }
         }
-        dimensionReasons[d] = dimsResult[d]?.reason ?? "";
+        dimensionReasons[d] = entry.reason ?? "";
+        if (Array.isArray(entry.redFlags) && entry.redFlags.length) {
+          dimensionRedFlags[d] = entry.redFlags;
+        }
       }
-      // 5개 차원 모두 fallback이라면 응답이 사실상 비어있는 상태 — 저장하지 않고 종료
-      if (fallbacks.length === DIMENSIONS.length) {
+      // 모든 행동이 fallback 또는 skipped라면 응답이 사실상 비어있는 상태 — 저장하지 않고 종료
+      const usableCount = DIMENSIONS.filter(
+        (d) => Number.isFinite(dimensionScores[d]) && !fallbacks.includes(d)
+      ).length;
+      if (usableCount === 0) {
         throw new Error(
           "AI 평가 결과를 읽지 못했어요. 본문이 너무 짧거나 일시적인 오류일 수 있어요. 본문을 좀 더 길게 입력하거나 잠시 후 다시 시도해주세요."
         );
@@ -97,13 +112,15 @@ export default function FactCheckPage() {
         checklistSnapshot: checklist.items,
         dimensionScores,
         dimensionReasons,
+        dimensionRedFlags,
+        dimensionSkipped,
         weightsSnapshot: weights,
         totalScore,
         variance,
         confidenceInterval95: ci95,
         accepted: false,
-        version: "IPFM-2.0",
-        standard_basis: "IFCN_5_principles",
+        version: "VAPM-3.0",
+        standard_basis: "5_verification_actions",
       });
 
       navigate(`/student/result/${historyId}`);
@@ -135,7 +152,7 @@ export default function FactCheckPage() {
   return (
     <Layout
       title="미디어 팩트체크"
-      subtitle="AI가 5가지 기준으로 미디어를 1~5점으로 평가하고, 내 평가 기준을 적용해 50점 만점으로 보여줘요"
+      subtitle="AI가 5대 검증 행동(출처·저자·콘텐츠·이미지·감정)으로 미디어를 1~5점으로 평가하고, 내 가중치를 적용해 50점 만점으로 보여줘요"
       actions={<Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>}
     >
       <div className="card grid gap-5">
@@ -152,7 +169,7 @@ export default function FactCheckPage() {
           </select>
           {cold && (
             <p className="mt-2 text-xs text-amber-700">
-              ※ 아직 평가가 적게 쌓여 있어요(현재 {model?.trainingDataCount ?? 0}개). 지금은 5가지 기준을 똑같이 보고 점수를 계산해요. "기준 다듬기"를 더 진행하면 너만의 기준이 반영됩니다.
+              ※ 아직 평가가 적게 쌓여 있어요(현재 {model?.trainingDataCount ?? 0}개). 지금은 5대 검증 행동을 똑같이 보고 점수를 계산해요. "기준 다듬기"를 더 진행하면 너만의 기준이 반영됩니다.
             </p>
           )}
         </div>
@@ -212,7 +229,7 @@ export default function FactCheckPage() {
         )}
       </section>
 
-      {running && <LoadingOverlay message="AI 친구가 5가지 기준으로 미디어를 살펴보고 있어요..." />}
+      {running && <LoadingOverlay message="AI 친구가 5대 검증 행동으로 미디어를 살펴보고 있어요..." />}
     </Layout>
   );
 }

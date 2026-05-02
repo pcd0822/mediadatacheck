@@ -134,10 +134,10 @@ export async function listStudentEvaluationsForUser(uid) {
   return results;
 }
 
-/* ====================== algorithm_model (IPFM-2.0) ====================== */
+/* ====================== algorithm_model (VAPM-3.0) ====================== */
 
-const MODEL_VERSION = "IPFM-2.0";
-const STANDARD_BASIS = "IFCN_5_principles";
+const MODEL_VERSION = "VAPM-3.0";
+const STANDARD_BASIS = "5_verification_actions";
 
 export async function saveAlgorithmModel(uid, model) {
   await setDoc(
@@ -146,6 +146,7 @@ export async function saveAlgorithmModel(uid, model) {
       version: MODEL_VERSION,
       standard_basis: STANDARD_BASIS,
       weights: model.weights ?? null,
+      mastery: model.mastery ?? null,
       checklistId: model.checklistId ?? null,
       trainingDataCount: model.trainingDataCount ?? 0,
       convergenceScore: model.convergenceScore ?? null,
@@ -184,7 +185,7 @@ export async function clearTrainingData(uid) {
   await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
 }
 
-/* ====================== feedback_cards (IPFM 메타인지 카드) ====================== */
+/* ====================== feedback_cards (VAPM 메타인지 카드) ====================== */
 
 export async function replaceFeedbackCards(uid, cards) {
   const colRef = collection(db, "users", uid, "feedback_cards");

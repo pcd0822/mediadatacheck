@@ -11,32 +11,37 @@ import {
 import { DIMENSION_INFO, aggregateToDimensions } from "../../utils/hpfm.js";
 import { ensureItemMappings } from "../../utils/mappingCache.js";
 
-// IFCN 5대 강령 기반 기본 평가 항목 (IPFM v2.0)
+// 5대 검증 행동 기반 기본 평가 항목 (VAPM v3.0)
 const DEFAULT_ITEMS = [
   {
-    question: "다양한 입장을 균형 있게 다루며 자극적 어휘로 감정을 흔들지 않는가?",
+    question:
+      "이 자료의 발행 매체나 사이트가 신뢰할 만하며, 알려진 매체를 위장하거나 의심스러운 도메인을 사용하지 않는가?",
     score: 3,
-    ifcn_principle: "초당파성과 공정성",
+    verification_action: "출처 확인 (Source Check)",
   },
   {
-    question: "주요 주장에 출처와 근거가 충분하고, 독자가 직접 추적·교차검증할 수 있는가?",
+    question:
+      "작성자의 이름·이력·전문성이 확인 가능하며, 봇이나 자동화 계정의 특징이 보이지 않는가?",
     score: 3,
-    ifcn_principle: "자료 출처의 투명성",
+    verification_action: "저자 확인 (Author Check)",
   },
   {
-    question: "작성자·매체가 누구이며 자격과 이해관계가 투명하게 공개되어 있는가?",
+    question:
+      "이 자료의 핵심 주장이 다른 신뢰할 만한 매체·공공기관·NGO의 보도와 일치하며, 인용된 통계·사실이 원자료에서 검증되는가?",
     score: 3,
-    ifcn_principle: "재원·조직의 투명성",
+    verification_action: "콘텐츠 교차 확인 (Content Cross-check)",
   },
   {
-    question: "사실 진술이 검증 가능하며, 결론에 도달한 방법이 투명하게 설명되어 있는가?",
+    question:
+      "자료에 포함된 사진·영상이 실제 내용과 맥락이 일치하며, 다른 사건의 이미지 재사용이나 딥페이크·AI 생성의 신호는 없는가?",
     score: 3,
-    ifcn_principle: "방법론의 투명성",
+    verification_action: "이미지·영상 확인 (Visual Verification)",
   },
   {
-    question: "발행 시점이 명확하고 정보가 현재에도 유효하며 정정 정책이 공개되어 있는가?",
+    question:
+      "이 자료가 부정적 감정(분노·공포·혐오·충격)을 강하게 자극하여 비판적 사고를 흐리고 즉각 공유·반응을 유도하려는 의도가 보이지 않는가?",
     score: 3,
-    ifcn_principle: "개방성과 정직한 수정",
+    verification_action: "감정 반응 점검 (Emotional Reaction Check)",
   },
 ];
 
@@ -143,7 +148,7 @@ export default function TeacherEvaluation() {
           <Button variant="secondary" onClick={addItem}>+ 항목 추가</Button>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          저장 시 각 질문은 IFCN 5대 차원(C1~C5)으로 자동 분류되어 학생 모델 학습의 기준이 됩니다.
+          저장 시 각 질문은 5대 검증 행동(V1~V5)으로 자동 분류되어 학생 모델 학습의 기준이 됩니다.
         </p>
         <div className="space-y-3">
           {items.map((it, idx) => (
@@ -159,14 +164,14 @@ export default function TeacherEvaluation() {
                   <span className="mt-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                     {it.dimension} · {DIMENSION_INFO[it.dimension].name}
                   </span>
-                ) : it.dimension === "C6" ? (
+                ) : it.dimension === "V6" ? (
                   <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
-                    C6 · 사용자 정의
+                    V6 · 사용자 정의
                   </span>
                 ) : null}
-                {it.ifcn_principle && (
+                {it.verification_action && (
                   <span className="ml-1 mt-1 inline-block rounded-full bg-brand-50 px-2 py-0.5 text-[10px] text-brand-700">
-                    IFCN: {it.ifcn_principle}
+                    검증 행동: {it.verification_action}
                   </span>
                 )}
               </div>

@@ -22,6 +22,7 @@ import {
   bayesianActive,
   bayesianUpdate,
   computeGap,
+  computeMastery,
   convergenceScore,
   generateFeedbackCards,
   initialWeights,
@@ -123,7 +124,7 @@ export default function ModelingPage() {
     }
     if (!activeChecklist.items.every((it) => it.dimension)) {
       alert(
-        "체크리스트 항목들이 5가지 기준에 아직 분류되지 않았어요. 체크리스트 페이지에서 한번 더 저장해주세요."
+        "체크리스트 항목들이 5대 검증 행동에 아직 분류되지 않았어요. 체크리스트 페이지에서 한번 더 저장해주세요."
       );
       return;
     }
@@ -200,8 +201,10 @@ export default function ModelingPage() {
       const cards = generateFeedbackCards(gapHistory);
       await replaceFeedbackCards(user.uid, cards);
 
+      const mastery = computeMastery(weights, gapHistory);
       const trained = {
         weights,
+        mastery,
         checklistId: activeChecklistId,
         trainingDataCount: totalCount,
         convergenceScore: conv,
@@ -285,7 +288,7 @@ export default function ModelingPage() {
       {model?.weights && (
         <div className="card mb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-base font-bold text-slate-900">내가 중요하게 보는 5가지 기준</h3>
+            <h3 className="text-base font-bold text-slate-900">내가 중요하게 보는 5대 검증 행동</h3>
             {model.convergenceScore != null && (
               <span className="badge bg-brand-50 text-brand-700">
                 내 기준 자리잡힌 정도 {(model.convergenceScore * 100).toFixed(0)}%
@@ -293,7 +296,7 @@ export default function ModelingPage() {
             )}
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            막대 길이 = 그 기준을 얼마나 중요하게 보는지. 평가가 쌓일수록 안정돼요.
+            막대 길이 = 그 검증 행동을 얼마나 중요하게 보는지. 평가가 쌓일수록 안정돼요.
           </p>
           <div className="mt-3 space-y-2">
             {weightsToArray(model.weights).map((w) => (

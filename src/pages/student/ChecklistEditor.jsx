@@ -93,6 +93,14 @@ export default function ChecklistEditor() {
     return null;
   };
 
+  const placeholderQuestions = [
+    "이 사이트 진짜야? (예: 매체 이름이 들어본 곳인가)",
+    "누가 썼고 사람 맞아? (예: 작성자 이름·이력이 검색되나)",
+    "다른 데서도 확인돼? (예: 주요 일간지에서도 같은 내용을 다루나)",
+    "이 사진·영상 진짜야? (예: 역이미지 검색해도 같은 사건의 이미지인가)",
+    "나 너무 흥분한 거 아니야? (예: 자극적 어휘로 즉시 공유하고 싶은 충동이 드나)",
+  ];
+
   const handleSave = async () => {
     const err = validate();
     if (err) return alert(err);
@@ -185,10 +193,10 @@ export default function ChecklistEditor() {
                       <span className="badge bg-emerald-50 text-emerald-700">
                         {DIMENSION_INFO[it.dimension].name}
                       </span>
-                    ) : it.dimension === "C6" ? (
+                    ) : it.dimension === "V6" ? (
                       <span className="badge bg-slate-100 text-slate-600">내가 만든 항목</span>
                     ) : (
-                      <span className="badge bg-amber-50 text-amber-700">저장하면 기준에 자동 분류돼요</span>
+                      <span className="badge bg-amber-50 text-amber-700">저장하면 검증 행동에 자동 분류돼요</span>
                     )}
                   </div>
                   <Button variant="ghost" onClick={() => removeItem(idx)}>삭제</Button>
@@ -198,7 +206,7 @@ export default function ChecklistEditor() {
                   className="input"
                   value={it.question}
                   onChange={(e) => updateItem(idx, { question: e.target.value })}
-                  placeholder="예) 출처가 명확하게 표시되어 있는가?"
+                  placeholder={`예) ${placeholderQuestions[idx % placeholderQuestions.length]}`}
                 />
                 <p className="mt-4 label">루브릭 (각 점수의 의미)</p>
                 <div className="grid gap-2">

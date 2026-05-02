@@ -10,7 +10,12 @@ import {
   listFeedbackCards,
 } from "../../services/firestore.js";
 import Mascot from "../../components/Mascot.jsx";
-import { DIMENSIONS, DIMENSION_INFO, weightsToArray } from "../../utils/hpfm.js";
+import {
+  DIMENSIONS,
+  DIMENSION_INFO,
+  masteryToArray,
+  weightsToArray,
+} from "../../utils/hpfm.js";
 
 const TYPE_META = {
   over: { label: "후한 평가", icon: "trending_up", tone: "rose" },
@@ -31,7 +36,7 @@ const STEPS = [
     icon: "format_list_bulleted",
     bigIcon: "format_list_bulleted",
     title: "체크리스트 만들기",
-    desc: "내가 미디어를 평가할 때 쓸 질문과 1~5점 기준을 직접 만들어요. 저장하면 5가지 평가 기준에 자동으로 정리됩니다.",
+    desc: "내가 미디어를 평가할 때 쓸 질문과 1~5점 기준을 직접 만들어요. 저장하면 5대 검증 행동(출처·저자·콘텐츠·이미지·감정)에 자동으로 정리됩니다.",
     cta: "체크리스트 작성",
     path: "/student/checklist",
     accent: "brand",
@@ -53,7 +58,7 @@ const STEPS = [
     icon: "verified",
     bigIcon: "verified",
     title: "미디어 팩트체크",
-    desc: "AI가 5가지 기준으로 미디어를 평가하면, 내 기준을 적용해 50점 만점 점수와 오차범위를 보여줘요.",
+    desc: "AI가 5대 검증 행동(출처·저자·콘텐츠·이미지·감정)으로 미디어를 평가하면, 내 가중치를 적용해 50점 만점 점수와 오차범위를 보여줘요.",
     cta: "팩트체크 실행",
     path: "/student/factcheck",
     accent: "orange",
@@ -176,7 +181,7 @@ export default function StudentDashboard() {
               <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
                 <div>
                   <h3 className="font-display text-xl font-bold tracking-tight text-ink">
-                    내가 중요하게 보는 5가지 기준
+                    내가 중요하게 보는 5대 검증 행동
                   </h3>
                   <p className="mt-1 text-xs text-ink-muted">
                     평가를 거듭할수록 막대 길이가 너의 판단 습관에 맞춰 조금씩 변해요. 다섯 막대를 합치면 100%가 돼요.
@@ -186,7 +191,8 @@ export default function StudentDashboard() {
               <div className="grid gap-2.5 md:grid-cols-2">
                 {weightsToArray(model.weights).map((w) => (
                   <div key={w.code} className="flex items-center gap-3">
-                    <span className="w-32 truncate text-xs text-ink-variant">
+                    <span className="w-40 truncate text-xs text-ink-variant">
+                      <span className="font-bold text-brand-600">{w.code}</span>{" "}
                       {w.name}
                     </span>
                     <div className="flex-1">
@@ -206,6 +212,61 @@ export default function StudentDashboard() {
             </section>
           )}
 
+          {model?.mastery && (
+            <section className="mb-10 rounded-3xl border border-slate-100 bg-white p-7 shadow-glow">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h3 className="font-display text-xl font-bold tracking-tight text-ink">
+                    검증 행동 마스터리
+                  </h3>
+                  <p className="mt-1 text-xs text-ink-muted">
+                    각 검증 행동을 얼마나 안정적으로 수행하는지 보여줘요. 격차가 작고 σ가 줄어들수록 마스터리가 올라가요.
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-2.5 md:grid-cols-2">
+                {masteryToArray(model.mastery).map((m) => {
+                  const pct = Math.max(0, Math.min(100, m.value * 100));
+                  const tone =
+                    pct >= 70 ? "emerald" : pct >= 40 ? "amber" : "rose";
+                  const barColor =
+                    tone === "emerald"
+                      ? "from-emerald-400 to-emerald-600"
+                      : tone === "amber"
+                      ? "from-amber-400 to-amber-600"
+                      : "from-rose-400 to-rose-600";
+                  const textColor =
+                    tone === "emerald"
+                      ? "text-emerald-700"
+                      : tone === "amber"
+                      ? "text-amber-700"
+                      : "text-rose-700";
+                  return (
+                    <div key={m.code} className="flex items-center gap-3">
+                      <span className="w-40 truncate text-xs text-ink-variant">
+                        <span className={`font-bold ${textColor}`}>{m.code}</span>{" "}
+                        {m.name}
+                      </span>
+                      <div className="flex-1">
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-surface-base">
+                          <div
+                            className={`h-2 rounded-full bg-gradient-to-r ${barColor} transition-all duration-500`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                      <span className={`w-16 text-right text-xs font-bold ${textColor}`}>
+                        {pct.toFixed(0)}%
+                        {pct < 40 && " ⚠️"}
+                        {pct >= 80 && " 🌟"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           <section className="mb-10 rounded-3xl border border-slate-100 bg-white p-7 shadow-glow">
             <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
               <div>
@@ -217,7 +278,7 @@ export default function StudentDashboard() {
                 </p>
               </div>
               <span className="badge bg-emerald-50 text-emerald-700">
-                안정 {DIMENSIONS.length - cards.length} / {DIMENSIONS.length}개 기준
+                안정 {DIMENSIONS.length - cards.length} / {DIMENSIONS.length}개 검증 행동
               </span>
             </div>
 
@@ -226,7 +287,7 @@ export default function StudentDashboard() {
             {cards.length === 0 ? (
               <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-surface-low p-6 text-center">
                 <p className="text-sm font-semibold text-ink">
-                  5가지 기준 모두에서 안정적으로 평가하고 있어요! 🎉
+                  5대 검증 행동 모두에서 안정적으로 평가하고 있어요! 🎉
                 </p>
                 <p className="mt-1 text-xs text-ink-muted">
                   미디어를 더 평가할수록 너만의 평가 습관이 더 자세히 분석돼요.

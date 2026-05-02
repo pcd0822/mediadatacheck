@@ -1,27 +1,38 @@
 /**
- * Netlify Function: Gemini 프록시 (IPFM v2.0 지원)
+ * Netlify Function: Gemini 프록시 (VAPM v3.0 지원)
  *
  * 두 가지 모드 지원:
- *  - mode: "map"      → 체크리스트 항목 → IFCN 5대 차원(C1~C5) 자동 분류
- *  - mode: "evaluate" → 미디어 자료 → 5대 차원 1~5점 평가 (단일 호출에서 5개 결과)
+ *  - mode: "map"      → 체크리스트 항목 → 5대 검증 행동(V1~V5) 자동 분류
+ *  - mode: "evaluate" → 미디어 자료 → 5대 검증 행동 1~5점 평가 (단일 호출에서 5개 결과)
  *
  * GEMINI_API_KEY는 서버에서만 사용 (클라이언트 미노출).
  */
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
-const DIMENSION_GUIDE = `
-[IFCN 5대 강령 기반 5대 차원]
-C1 공정성·균형 (Fairness & Balance, IFCN 강령 1 — 초당파성과 공정성):
-   다양한 입장 균형, 자극·정파적 어휘 자제, 작성자 의견과 사실의 구분, 광고·홍보성 단서
-C2 근거·자료의 투명성 (Source Transparency, IFCN 강령 2 — 자료 출처의 투명성):
-   주요 주장의 1차 출처·인용·데이터 명시, 외부 링크·각주를 통한 검증 가능성, 다중 독립 출처의 일치
-C3 출처·작성자의 투명성 (Author/Org Transparency, IFCN 강령 3 — 재원·조직의 투명성):
-   작성자·매체의 신원·자격·이력, 매체의 소유 구조·재원·이해관계 공개 여부
-C4 검증된 방법과 증거 (Methodology & Evidence, IFCN 강령 4 — 방법론의 투명성):
-   사실 진술의 정확성, 통계 산출 방식·연구 방법 명시, 추측과 사실의 구분, 인용 맥락 보존
-C5 정정 가능성과 시의성 (Correction & Currency, IFCN 강령 5 — 개방성과 정직한 수정):
-   발행일 명확성, 다루는 주제 대비 최신성, 정정·갱신 정책의 공개 여부와 후속 보도 연결
+const VERIFICATION_GUIDE = `
+[VAPM v3.0 — 5대 검증 행동]
+V1 출처 확인 (Source Check):
+   매체 도메인의 정확성(타이포스쿼팅 여부), 매체 운영 이력·평판, "회사 소개"·연락처의
+   충실성, 알려진 신뢰 매체 위장 여부, HTTPS·디자인 품질·광고 비율 등 매체 자체의 진위.
+
+V2 저자 확인 (Author Check):
+   작성자명·이력·소속의 검증 가능성, 이전 글들의 일관성, 봇/자동화 계정 신호
+   (비정상 게시 빈도, 새벽 시간대 일관 활동, 동일 문구 반복, 프로필 부실), 이해관계 공개.
+
+V3 콘텐츠 교차 확인 (Content Cross-check):
+   주요 일간지·방송, 공공기관, NGO·연구기관 보도와의 일치, 인용 통계의 원자료 추적,
+   단일 출처 의존 여부, 사실 진술과 의견 진술의 구분.
+
+V4 이미지·영상 확인 (Visual Verification):
+   본문에 포함되거나 인용된 시각 자료(사진·영상·그래프·차트·스크린샷)의 출처·맥락 정합성,
+   다른 사건 이미지의 재사용 여부, 딥페이크·AI 생성 신호(어색한 손가락, 깨진 글자, 입모양·
+   그림자 불일치). 본문에 시각 자료 언급이 전혀 없으면 score를 null로 두고 skipped: true.
+
+V5 감정 반응 점검 (Emotional Reaction Check):
+   자극적 어휘 빈도(충격·경악·비밀·절대 등), 클릭베이트 헤드라인, 분노·공포·혐오 유발,
+   사실보다 감정 호소 우선 여부, 즉각 공유·반응 유도 문구. 메타인지: 독자가 강한 감정을
+   느끼도록 유도되는 정도.
 `.trim();
 
 /* ===================== 매핑 모드 ===================== */
@@ -31,31 +42,31 @@ function buildMapPrompt(items) {
     .map((it, idx) => `${idx}. ${it.question || "(빈 항목)"}`)
     .join("\n");
   return `당신은 미디어 리터러시 전문가입니다.
-다음 팩트체킹 질문들을 IFCN 5대 강령 기반 5대 차원 중 가장 적합한 단일 차원으로 분류하세요.
+다음 팩트체킹 질문들을 5대 검증 행동(VAPM v3.0의 V1~V5) 중 가장 적합한 단일 행동으로 분류하세요.
 
-${DIMENSION_GUIDE}
+${VERIFICATION_GUIDE}
 
 [질문 목록]
 ${list}
 
 규칙:
-- 각 질문에 가장 적합한 차원 1개만 부여한다.
-- 어디에도 명확히 속하지 않으면 "C6" (사용자 정의)로 분류한다.
+- 각 질문에 가장 적합한 검증 행동 1개만 부여한다.
+- 어디에도 명확히 속하지 않으면 "V6" (사용자 정의)로 분류한다.
 - confidence는 0~1 사이 실수.
 - JSON만 출력. 마크다운 금지.
 
 응답 스키마:
-{"mappings":[{"index":0,"dimension":"C2","confidence":0.87,"reason":"..."}, ...]}`;
+{"mappings":[{"index":0,"verification":"V3","confidence":0.87,"reason":"..."}, ...]}`;
 }
 
 /* ===================== 평가 모드 ===================== */
 
 function buildEvaluatePrompt(media) {
   return `당신은 미디어 리터러시 보조 AI입니다.
-다음 미디어 자료를 IFCN 5대 강령 기반 5대 차원 각각에 대해 1~5점 정수로 평가하세요.
-각 차원의 평가 근거를 1~2문장 한국어로 작성합니다.
+다음 미디어 자료를 5대 검증 행동(VAPM v3.0의 V1~V5) 각각에 대해 1~5점 정수로 평가하세요.
+각 행동의 평가 근거를 1~2문장 한국어로 작성합니다.
 
-${DIMENSION_GUIDE}
+${VERIFICATION_GUIDE}
 
 [미디어 자료]
 제목: ${media.title || "(제목 없음)"}
@@ -65,11 +76,16 @@ ${media.content || ""}
 
 규칙:
 - 점수는 1, 2, 3, 4, 5 중 하나의 정수.
-- 5개 차원(C1~C5) 모두 평가.
+- V1~V5 5개 행동 모두 평가.
+- 단, V4(이미지·영상 확인)는 본문에 시각 자료 언급이 전혀 없을 때에 한해
+  score를 null, skipped를 true로 표시하고 reason에 "본문에 시각 자료 언급 없음"으로 적는다.
+  본문에 사진·영상·그래프·차트·스크린샷 인용이 조금이라도 언급되면 일반 점수를 부여한다.
+- redFlags는 발견된 위험 신호(예: "타이포스쿼팅 의심 도메인", "분노 유발 헤드라인")가 있을 때만
+  배열로 채우고, 없으면 빈 배열을 둔다.
 - JSON만 출력. 마크다운 금지.
 
 응답 스키마:
-{"dimensions":{"C1":{"score":4,"reason":"..."},"C2":{"score":3,"reason":"..."},"C3":{"score":5,"reason":"..."},"C4":{"score":3,"reason":"..."},"C5":{"score":2,"reason":"..."}}}`;
+{"verifications":{"V1":{"score":4,"reason":"...","redFlags":[]},"V2":{"score":3,"reason":"..."},"V3":{"score":5,"reason":"..."},"V4":{"score":null,"skipped":true,"reason":"본문에 시각 자료 언급 없음"},"V5":{"score":2,"reason":"..."}}}`;
 }
 
 /* ===================== 유틸 ===================== */
@@ -120,22 +136,31 @@ async function callGemini(apiKey, prompt) {
   return parsed;
 }
 
-const VALID_DIMS = ["C1", "C2", "C3", "C4", "C5", "C6"];
-const EVAL_DIMS = ["C1", "C2", "C3", "C4", "C5"];
+const VALID_DIMS = ["V1", "V2", "V3", "V4", "V5", "V6"];
+const EVAL_DIMS = ["V1", "V2", "V3", "V4", "V5"];
 
-/** v1(HPFM 7차원) 잔재 응답을 v2(IPFM 5차원)로 자동 흡수하기 위한 매핑. */
+/**
+ * 레거시 차원 코드(D1~D8: HPFM v1, C1~C6: IPFM v2)를 VAPM v3 코드로 매핑.
+ * 매핑 규칙은 src/utils/hpfm.js의 LEGACY_TO_NEW와 동일.
+ */
 const LEGACY_TO_NEW = {
-  D1: ["C3"],
-  D2: ["C4"],
-  D3: ["C5"],
-  D4: ["C2"],
-  D5: ["C1"],
-  D6: ["C1"],
-  D7: ["C2"],
-  D8: ["C6"],
+  D1: ["V1", "V2"],
+  D2: ["V3"],
+  D3: ["V1"],
+  D4: ["V3"],
+  D5: ["V5"],
+  D6: ["V5"],
+  D7: ["V3"],
+  D8: ["V6"],
+  C1: ["V5"],
+  C2: ["V3"],
+  C3: ["V1", "V2"],
+  C4: ["V3"],
+  C5: ["V1"],
+  C6: ["V6"],
 };
 
-function resolveDimensionCode(raw) {
+function resolveVerificationCode(raw) {
   const code = String(raw ?? "").toUpperCase().trim();
   if (VALID_DIMS.includes(code)) return [code];
   if (LEGACY_TO_NEW[code]) return LEGACY_TO_NEW[code];
@@ -148,50 +173,81 @@ function normalizeMappings(parsed, items) {
   for (const m of arr) {
     const idx = Number(m?.index);
     if (!Number.isInteger(idx)) continue;
-    const targets = resolveDimensionCode(m?.dimension);
-    const dim = targets ? targets[0] : "C6";
+    const rawCode = m?.verification ?? m?.dimension; // 레거시 키 호환
+    const targets = resolveVerificationCode(rawCode);
+    const dim = targets ? targets[0] : "V6";
     byIndex[idx] = {
-      dimension: dim,
+      dimension: dim, // 클라이언트 기존 필드명 호환
+      verification: dim,
       confidence: clamp01(Number(m?.confidence)),
       reason: typeof m?.reason === "string" ? m.reason : "",
     };
   }
   return items.map((_, i) =>
-    byIndex[i] ?? { dimension: "C6", confidence: 0, reason: "분류 실패" }
+    byIndex[i] ?? {
+      dimension: "V6",
+      verification: "V6",
+      confidence: 0,
+      reason: "분류 실패",
+    }
   );
 }
 
 /**
  * 평가 응답 정규화.
- * - v1 키(D1~D7)가 섞여 와도 v2(C1~C5)로 평균 변환.
- * - 모든 차원이 빈 채로 오면 throw하여 호출자가 명확하게 실패를 인지.
+ * - 응답은 `verifications` 키 또는 레거시 `dimensions` 키 모두 허용.
+ * - V4의 `skipped: true` 또는 `score: null`은 "이미지 없음"으로 보존(=N/A).
+ * - 레거시 키(D1~D8, C1~C6)가 섞여 와도 V1~V5로 평균 변환.
+ * - 모든 행동이 빈 채로 오면 throw.
  */
 function normalizeEvaluation(parsed) {
-  const dims = parsed?.dimensions ?? {};
+  const dims = parsed?.verifications ?? parsed?.dimensions ?? {};
   const sums = {};
   const counts = {};
   const reasons = {};
+  const redFlags = {};
+  const skipped = {};
 
   for (const rawCode of Object.keys(dims)) {
     const v = dims[rawCode];
-    if (!v) continue;
-    const raw = Math.round(Number(v.score));
-    if (!Number.isFinite(raw)) continue;
-    const score = Math.max(1, Math.min(5, raw));
-    const targets = resolveDimensionCode(rawCode);
+    if (!v || typeof v !== "object") continue;
+    const targets = resolveVerificationCode(rawCode);
     if (!targets) continue;
+
+    const isSkipped = v.skipped === true || v.score === null || v.score === "null";
+    const raw = isSkipped ? null : Math.round(Number(v.score));
+    const score = isSkipped
+      ? null
+      : Number.isFinite(raw)
+      ? Math.max(1, Math.min(5, raw))
+      : null;
+
     for (const t of targets) {
       if (!EVAL_DIMS.includes(t)) continue;
+      if (score === null) {
+        // skipped: 점수 없이 reason과 skipped만 기록
+        if (skipped[t] === undefined) skipped[t] = isSkipped;
+        if (!reasons[t] && typeof v.reason === "string" && v.reason.trim()) {
+          reasons[t] = v.reason;
+        }
+        continue;
+      }
       sums[t] = (sums[t] ?? 0) + score;
       counts[t] = (counts[t] ?? 0) + 1;
       if (!reasons[t] && typeof v.reason === "string" && v.reason.trim()) {
         reasons[t] = v.reason;
       }
+      if (!redFlags[t] && Array.isArray(v.redFlags) && v.redFlags.length) {
+        redFlags[t] = v.redFlags
+          .filter((s) => typeof s === "string" && s.trim())
+          .slice(0, 5);
+      }
     }
   }
 
   const filledCount = EVAL_DIMS.filter((d) => counts[d]).length;
-  if (filledCount === 0) {
+  const skippedCount = EVAL_DIMS.filter((d) => skipped[d] && !counts[d]).length;
+  if (filledCount === 0 && skippedCount === 0) {
     const err = new Error("AI 평가 응답이 비어 있어요. 잠시 후 다시 시도해주세요.");
     err.status = 502;
     err.detail = JSON.stringify(parsed).slice(0, 500);
@@ -204,16 +260,28 @@ function normalizeEvaluation(parsed) {
       out[code] = {
         score: Math.round(sums[code] / counts[code]),
         reason: reasons[code] ?? "",
+        redFlags: redFlags[code] ?? [],
+      };
+    } else if (skipped[code]) {
+      // V4가 N/A인 경우 (이미지·영상 언급 없음) 점수 없이 보존
+      out[code] = {
+        score: null,
+        skipped: true,
+        reason: reasons[code] ?? "본문에 해당 검증 행동의 단서가 없어 평가에서 제외했어요.",
+        redFlags: [],
       };
     } else {
-      // 일부 차원만 비어있는 경우 — 평균 점수로 fallback 표시 (학생 화면에서 NaN 방지)
-      const present = EVAL_DIMS.filter((d) => counts[d]).map((d) => sums[d] / counts[d]);
+      // 일부 행동만 비어있는 경우 (V4 외 다른 행동) — 평균 점수로 fallback
+      const present = EVAL_DIMS.filter((d) => counts[d]).map(
+        (d) => sums[d] / counts[d]
+      );
       const avg = present.length
         ? Math.round(present.reduce((a, b) => a + b, 0) / present.length)
         : 3;
       out[code] = {
         score: Math.max(1, Math.min(5, avg)),
-        reason: "이 항목은 자료에서 단서를 찾기 어려워 평균값을 사용했어요.",
+        reason: "이 행동은 자료에서 단서를 찾기 어려워 평균값을 사용했어요.",
+        redFlags: [],
       };
     }
   }
@@ -271,7 +339,9 @@ export async function handler(event) {
       const media = payload.media;
       if (!media?.content) return jsonResponse(400, { error: "media.content가 필요합니다." });
       const parsed = await callGemini(apiKey, buildEvaluatePrompt(media));
-      return jsonResponse(200, { dimensions: normalizeEvaluation(parsed) });
+      const verifications = normalizeEvaluation(parsed);
+      // 클라이언트 호환을 위해 dimensions 키도 함께 반환
+      return jsonResponse(200, { verifications, dimensions: verifications });
     }
 
     return jsonResponse(400, { error: "mode는 'map' 또는 'evaluate' 중 하나여야 합니다." });

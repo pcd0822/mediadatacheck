@@ -1,10 +1,10 @@
 import { mapChecklistItems } from "../services/gemini.js";
 
-/** 현재(v2) 유효한 차원 코드. v1 잔재(D1~D7, D8)는 자동 재매핑 대상. */
-const VALID_DIMS = new Set(["C1", "C2", "C3", "C4", "C5", "C6"]);
+/** 현재(v3) 유효한 검증 행동 코드. 레거시 잔재(D1~D8, C1~C6)는 자동 재매핑 대상. */
+const VALID_DIMS = new Set(["V1", "V2", "V3", "V4", "V5", "V6"]);
 
 /**
- * 항목 리스트에 차원 매핑이 없거나, 질문 텍스트가 변경되었거나, v1 잔재 차원 코드인 항목만 다시 매핑한다.
+ * 항목 리스트에 검증 행동 매핑이 없거나, 질문 텍스트가 변경되었거나, 레거시 차원 코드인 항목만 다시 매핑한다.
  * 캐시 키는 dimensionMapKey 필드(저장 시점의 질문 텍스트).
  *
  * @param {Array<{question:string, dimension?:string, dimensionConfidence?:number, dimensionMapKey?:string}>} items
