@@ -61,7 +61,16 @@ ${list}
 
 /* ===================== 평가 모드 ===================== */
 
-function buildEvaluatePrompt(media) {
+function buildEvaluatePrompt(media, { hasImage }) {
+  const v4Rule = hasImage
+    ? `- V4(이미지·영상 확인): 첨부된 이미지를 직접 분석하라. 이미지의 출처·맥락 정합성,
+    다른 사건 이미지의 재사용 흔적, 딥페이크·AI 생성 신호(어색한 손가락, 깨진 글자,
+    입모양·그림자 불일치 등)를 종합해 1~5점 정수로 평가한다. **이미지가 첨부되어 있으므로
+    절대 skipped 처리하지 말고 반드시 1~5점 정수 점수를 부여한다.** 이미지에서 발견한
+    구체적인 단서를 reason에 1~2문장으로 적는다.`
+    : `- V4(이미지·영상 확인): 본문에 시각 자료 언급이 전혀 없을 때에 한해
+    score를 null, skipped를 true로 표시하고 reason에 "본문에 시각 자료 언급 없음"으로 적는다.
+    본문에 사진·영상·그래프·차트·스크린샷 인용이 조금이라도 언급되면 일반 점수를 부여한다.`;
   return `당신은 미디어 리터러시 보조 AI입니다.
 다음 미디어 자료를 5대 검증 행동(VAPM v3.0의 V1~V5) 각각에 대해 1~5점 정수로 평가하세요.
 각 행동의 평가 근거를 1~2문장 한국어로 작성합니다.
@@ -71,21 +80,20 @@ ${VERIFICATION_GUIDE}
 [미디어 자료]
 제목: ${media.title || "(제목 없음)"}
 링크: ${media.link || "(없음)"}
+첨부 이미지: ${hasImage ? "있음 (별도 파트로 전달됨)" : "없음"}
 본문:
 ${media.content || ""}
 
 규칙:
 - 점수는 1, 2, 3, 4, 5 중 하나의 정수.
 - V1~V5 5개 행동 모두 평가.
-- 단, V4(이미지·영상 확인)는 본문에 시각 자료 언급이 전혀 없을 때에 한해
-  score를 null, skipped를 true로 표시하고 reason에 "본문에 시각 자료 언급 없음"으로 적는다.
-  본문에 사진·영상·그래프·차트·스크린샷 인용이 조금이라도 언급되면 일반 점수를 부여한다.
-- redFlags는 발견된 위험 신호(예: "타이포스쿼팅 의심 도메인", "분노 유발 헤드라인")가 있을 때만
-  배열로 채우고, 없으면 빈 배열을 둔다.
+${v4Rule}
+- redFlags는 발견된 위험 신호(예: "타이포스쿼팅 의심 도메인", "분노 유발 헤드라인",
+  "딥페이크 의심 합성 흔적")가 있을 때만 배열로 채우고, 없으면 빈 배열을 둔다.
 - JSON만 출력. 마크다운 금지.
 
 응답 스키마:
-{"verifications":{"V1":{"score":4,"reason":"...","redFlags":[]},"V2":{"score":3,"reason":"..."},"V3":{"score":5,"reason":"..."},"V4":{"score":null,"skipped":true,"reason":"본문에 시각 자료 언급 없음"},"V5":{"score":2,"reason":"..."}}}`;
+{"verifications":{"V1":{"score":4,"reason":"...","redFlags":[]},"V2":{"score":3,"reason":"..."},"V3":{"score":5,"reason":"..."},"V4":{"score":${hasImage ? "3" : "null"},${hasImage ? "" : "\"skipped\":true,"}"reason":"..."},"V5":{"score":2,"reason":"..."}}}`;
 }
 
 /* ===================== 유틸 ===================== */
@@ -104,13 +112,52 @@ function extractJson(text) {
   }
 }
 
-async function callGemini(apiKey, prompt) {
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB, storage.rules와 동일
+const ALLOWED_IMAGE_MIME = /^image\/(jpeg|jpg|png|webp|gif|heic|heif)$/i;
+
+async function fetchImageInline(imageUrl) {
+  if (!imageUrl) return null;
+  const res = await fetch(imageUrl);
+  if (!res.ok) {
+    const err = new Error("첨부 이미지를 불러오지 못했어요.");
+    err.status = 400;
+    err.detail = `imageUrl fetch failed: ${res.status}`;
+    throw err;
+  }
+  const contentType =
+    res.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+  if (!ALLOWED_IMAGE_MIME.test(contentType)) {
+    const err = new Error(`지원하지 않는 이미지 형식: ${contentType}`);
+    err.status = 400;
+    throw err;
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > MAX_IMAGE_BYTES) {
+    const err = new Error(
+      `이미지 용량 초과 (${(buf.length / 1024 / 1024).toFixed(1)}MB). 10MB 이하로 압축해주세요.`
+    );
+    err.status = 400;
+    throw err;
+  }
+  return { mimeType: contentType, data: buf.toString("base64") };
+}
+
+async function callGemini(apiKey, prompt, inlineImage) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent?key=${apiKey}`;
+  const parts = [{ text: prompt }];
+  if (inlineImage) {
+    parts.push({
+      inline_data: {
+        mime_type: inlineImage.mimeType,
+        data: inlineImage.data,
+      },
+    });
+  }
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      contents: [{ role: "user", parts }],
       generationConfig: {
         temperature: 0.3,
         responseMimeType: "application/json",
@@ -197,10 +244,11 @@ function normalizeMappings(parsed, items) {
  * 평가 응답 정규화.
  * - 응답은 `verifications` 키 또는 레거시 `dimensions` 키 모두 허용.
  * - V4의 `skipped: true` 또는 `score: null`은 "이미지 없음"으로 보존(=N/A).
+ *   단 hasImage=true이면 V4 skipped를 무시하고 평균 점수로 fallback (학생이 이미지를 첨부했으므로).
  * - 레거시 키(D1~D8, C1~C6)가 섞여 와도 V1~V5로 평균 변환.
  * - 모든 행동이 빈 채로 오면 throw.
  */
-function normalizeEvaluation(parsed) {
+function normalizeEvaluation(parsed, { hasImage = false } = {}) {
   const dims = parsed?.verifications ?? parsed?.dimensions ?? {};
   const sums = {};
   const counts = {};
@@ -214,7 +262,11 @@ function normalizeEvaluation(parsed) {
     const targets = resolveVerificationCode(rawCode);
     if (!targets) continue;
 
-    const isSkipped = v.skipped === true || v.score === null || v.score === "null";
+    // hasImage가 true면 V4의 skipped 응답을 무시 (학생이 이미지를 첨부했으므로 평가해야 함).
+    const isV4Target = targets.includes("V4");
+    const rawSkipped =
+      v.skipped === true || v.score === null || v.score === "null";
+    const isSkipped = rawSkipped && !(isV4Target && hasImage);
     const raw = isSkipped ? null : Math.round(Number(v.score));
     const score = isSkipped
       ? null
@@ -338,8 +390,17 @@ export async function handler(event) {
     if (mode === "evaluate") {
       const media = payload.media;
       if (!media?.content) return jsonResponse(400, { error: "media.content가 필요합니다." });
-      const parsed = await callGemini(apiKey, buildEvaluatePrompt(media));
-      const verifications = normalizeEvaluation(parsed);
+      const inlineImage = media.imageUrl
+        ? await fetchImageInline(media.imageUrl)
+        : null;
+      const parsed = await callGemini(
+        apiKey,
+        buildEvaluatePrompt(media, { hasImage: Boolean(inlineImage) }),
+        inlineImage
+      );
+      const verifications = normalizeEvaluation(parsed, {
+        hasImage: Boolean(inlineImage),
+      });
       // 클라이언트 호환을 위해 dimensions 키도 함께 반환
       return jsonResponse(200, { verifications, dimensions: verifications });
     }

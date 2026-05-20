@@ -13,6 +13,7 @@ import {
   saveFactCheckHistory,
 } from "../../services/firestore.js";
 import { evaluateMediaDimensions } from "../../services/gemini.js";
+import { uploadFactCheckImage } from "../../services/storage.js";
 import {
   DIMENSIONS,
   computeFinalScore,
@@ -32,6 +33,10 @@ export default function FactCheckPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({ title: "", content: "", link: "" });
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
+  // 교사 카드에서 가져온 썸네일 URL (학생이 새로 업로드하지 않았을 때 V4 평가에 사용)
+  const [teacherImageUrl, setTeacherImageUrl] = useState("");
   const [history, setHistory] = useState([]);
   const [teacherMedia, setTeacherMedia] = useState([]);
 
@@ -58,12 +63,43 @@ export default function FactCheckPage() {
 
   const onChange = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
+  const onImageFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setError(
+        `이미지가 ${(file.size / 1024 / 1024).toFixed(1)}MB로 너무 커요. 10MB 이하로 압축한 뒤 다시 선택해주세요.`
+      );
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setError(`이미지 파일만 첨부할 수 있어요 (현재 형식: ${file.type || "알 수 없음"}).`);
+      return;
+    }
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setTeacherImageUrl(""); // 학생이 직접 올린 게 우선
+    setError("");
+  };
+
+  const handleRemoveImage = () => {
+    setImageFile(null);
+    setImagePreview("");
+    setTeacherImageUrl("");
+  };
+
   const fillFromTeacher = (m) => {
     setForm({
       title: m.title ?? "",
       content: m.content ?? "",
       link: m.link ?? "",
     });
+    // 교사가 등록한 썸네일이 있으면 V4 평가에 같이 쓰도록 가져온다.
+    // 학생이 직접 올린 이미지가 있었다면 그것을 우선 유지.
+    if (!imageFile) {
+      setTeacherImageUrl(m.thumbnailUrl ?? "");
+      setImagePreview(m.thumbnailUrl ?? "");
+    }
     setError("");
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -81,7 +117,14 @@ export default function FactCheckPage() {
       const checklist = await getChecklist(user.uid, activeChecklistId);
       if (!checklist) throw new Error("체크리스트를 찾을 수 없습니다.");
 
-      const dimsResult = await evaluateMediaDimensions(form);
+      // 학생이 직접 올린 이미지가 있으면 Storage에 업로드 → URL 확보.
+      // 없고 교사 썸네일을 가져왔다면 그 URL을 그대로 사용.
+      let imageUrl = teacherImageUrl;
+      if (imageFile) {
+        imageUrl = await uploadFactCheckImage(imageFile, user.uid);
+      }
+
+      const dimsResult = await evaluateMediaDimensions({ ...form, imageUrl });
       const dimensionScores = {};
       const dimensionReasons = {};
       const dimensionRedFlags = {};
@@ -123,7 +166,7 @@ export default function FactCheckPage() {
       const ci95 = confidenceInterval95(totalScore, variance);
 
       const historyId = await saveFactCheckHistory(user.uid, {
-        media: { ...form },
+        media: { ...form, imageUrl: imageUrl || "" },
         checklistId: activeChecklistId,
         checklistSnapshot: checklist.items,
         dimensionScores,
@@ -206,6 +249,37 @@ export default function FactCheckPage() {
         <div>
           <label className="label">원본 링크</label>
           <input type="url" className="input" value={form.link} onChange={onChange("link")} placeholder="https://..." />
+        </div>
+
+        <div>
+          <label className="label">첨부 이미지 (선택)</label>
+          <p className="mb-2 text-[11px] text-slate-500">
+            기사·게시물에 포함된 사진·스크린샷·그래프를 첨부하면 AI가 V4(이미지·영상 확인)에서
+            실제 이미지를 분석해 점수를 매겨요. 첨부하지 않으면 V4는 본문 언급 여부로 판단합니다.
+          </p>
+          <input type="file" accept="image/*" onChange={onImageFile} />
+          {imagePreview && (
+            <div className="mt-3 flex flex-col items-start gap-3">
+              <img
+                src={imagePreview}
+                alt="첨부 이미지 미리보기"
+                className="rounded-xl object-contain ring-1 ring-slate-200"
+                style={{ maxWidth: "100%", maxHeight: "360px" }}
+              />
+              <div className="flex items-center gap-3">
+                {imageFile ? (
+                  <p className="text-xs text-slate-500">
+                    {imageFile.name} · {(imageFile.size / 1024 / 1024).toFixed(2)}MB
+                  </p>
+                ) : teacherImageUrl ? (
+                  <p className="text-xs text-slate-500">선생님 자료의 이미지를 가져왔어요</p>
+                ) : null}
+                <Button type="button" variant="ghost" onClick={handleRemoveImage}>
+                  이미지 제거
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}

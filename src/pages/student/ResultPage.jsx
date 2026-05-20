@@ -516,6 +516,19 @@ export default function ResultPage() {
               원본 링크 ↗
             </a>
           )}
+          {history.media?.imageUrl && (
+            <div className="mt-4">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                첨부 이미지 (V4 평가 대상)
+              </p>
+              <img
+                src={history.media.imageUrl}
+                alt="평가 대상 첨부 이미지"
+                className="rounded-xl object-contain ring-1 ring-slate-200"
+                style={{ maxWidth: "100%", maxHeight: "480px" }}
+              />
+            </div>
+          )}
           <p className="mt-3 whitespace-pre-wrap text-[15px] italic leading-relaxed text-ink-variant">
             "{history.media?.content}"
           </p>

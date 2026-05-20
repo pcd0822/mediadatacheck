@@ -28,9 +28,10 @@ export async function mapChecklistItems(items) {
 
 /**
  * 미디어 자료를 5대 검증 행동(V1~V5)으로 1~5점 평가.
- * - V4(이미지·영상)가 본문에 시각 자료 언급이 없을 때는 score=null, skipped=true로 반환됨.
+ * - V4(이미지·영상)는 media.imageUrl이 있으면 Gemini가 멀티모달로 직접 이미지를 분석.
+ *   imageUrl이 없고 본문에 시각 자료 언급도 없을 때만 score=null, skipped=true로 반환됨.
  * - 응답이 비어있거나 모든 점수가 누락되면 throw하여 fallback 일괄 저장 방지.
- * @param {{title:string, content:string, link?:string}} media
+ * @param {{title:string, content:string, link?:string, imageUrl?:string}} media
  * @returns {Promise<Record<"V1"|"V2"|"V3"|"V4"|"V5", {score:number|null, skipped?:boolean, reason:string, redFlags?:string[]}>>}
  */
 export async function evaluateMediaDimensions(media) {

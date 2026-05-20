@@ -16,6 +16,19 @@ service firebase.storage {
                     && request.auth.uid == userId;
     }
 
+    // 학생이 팩트체크 실행 시 첨부한 이미지(V4 시각 검증용).
+    // - 읽기: 로그인한 사용자면 가능 (결과 페이지에서 다시 보여줘야 함).
+    // - 쓰기: 본인 UID 경로에만, 10MB 이하 이미지로 제한.
+    match /factcheck_images/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.auth.uid == userId
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null
+                    && request.auth.uid == userId;
+    }
+
     // 그 외 경로는 기본 거부.
     match /{allPaths=**} {
       allow read, write: if false;
