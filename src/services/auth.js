@@ -21,6 +21,19 @@ export function startGoogleSignIn(role) {
   return signInWithRedirect(auth, googleProvider);
 }
 
+// getRedirectResult가 null을 돌려주는 환경(iOS Safari, 3rd-party 쿠키 차단 등)에서도
+// 프로필 부트스트랩이 가능하도록 pendingRole을 별도 헬퍼로 노출.
+// 한 번 꺼내면 즉시 삭제해서 다음 세션에 누수되지 않게 한다.
+export function consumePendingRole() {
+  try {
+    const role = sessionStorage.getItem(PENDING_ROLE_KEY);
+    if (role) sessionStorage.removeItem(PENDING_ROLE_KEY);
+    return role || null;
+  } catch {
+    return null;
+  }
+}
+
 // 페이지 로드 시 1회 호출. 리다이렉트 복귀가 아니면 null 반환.
 // StrictMode가 effect를 두 번 실행해도 같은 결과를 돌려주도록 캐시.
 // (getRedirectResult는 1회만 소비되므로 두 번째 호출은 null을 반환하는 문제 회피)

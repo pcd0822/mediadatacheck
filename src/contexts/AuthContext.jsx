@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
+  consumePendingRole,
   consumeRedirectResult,
   ensureUserProfile,
   getUserProfile,
@@ -34,7 +35,18 @@ export function AuthProvider({ children }) {
       unsub = onAuthStateChanged(async (fbUser) => {
         setUser(fbUser ?? null);
         if (fbUser) {
-          const p = await getUserProfile(fbUser.uid);
+          let p = await getUserProfile(fbUser.uid);
+          // consumeRedirectResult가 null을 돌려준 환경에서도 user는 살아 있는 경우가 있다.
+          // 그때 sessionStorage에 남아 있는 pendingRole로 프로필을 부트스트랩한다.
+          if (!p) {
+            const pendingRole = consumePendingRole();
+            try {
+              await ensureUserProfile(fbUser, pendingRole || "student");
+              p = await getUserProfile(fbUser.uid);
+            } catch (e) {
+              console.error("프로필 부트스트랩 실패", e);
+            }
+          }
           setProfile(p);
         } else {
           setProfile(null);
