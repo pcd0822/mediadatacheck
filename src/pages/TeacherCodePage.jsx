@@ -1,16 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Button from "../components/Button.jsx";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { TEACHER_AUTH_CODE } from "../firebase.js";
-import { ensureUserProfile, signInWithGoogle } from "../services/auth.js";
+import { startGoogleSignIn } from "../services/auth.js";
 
 export default function TeacherCodePage() {
   const navigate = useNavigate();
-  const { refreshProfile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // 리다이렉트 복귀 후 자동 이동 (redirect는 호출했던 URL = /teacher-code로 돌아옴)
+  useEffect(() => {
+    if (authLoading) return;
+    if (user && profile?.role === "teacher") {
+      navigate("/teacher/upload", { replace: true });
+    } else if (user && profile?.role === "student") {
+      navigate("/student", { replace: true });
+    }
+  }, [user, profile, authLoading, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -21,14 +31,11 @@ export default function TeacherCodePage() {
     }
     setLoading(true);
     try {
-      const fbUser = await signInWithGoogle();
-      await ensureUserProfile(fbUser, "teacher");
-      await refreshProfile();
-      navigate("/teacher/upload", { replace: true });
+      // 페이지가 Google로 이동 → 복귀 후 AuthProvider가 teacher 프로필 생성/로딩
+      await startGoogleSignIn("teacher");
     } catch (err) {
       console.error(err);
       setError("로그인에 실패했습니다. 다시 시도해주세요.");
-    } finally {
       setLoading(false);
     }
   };

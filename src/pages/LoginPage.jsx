@@ -4,11 +4,11 @@ import LoadingOverlay from "../components/Loading/LoadingOverlay.jsx";
 import Spinner from "../components/Loading/Spinner.jsx";
 import { MascotScene } from "../components/Mascot.jsx";
 import { useAuth } from "../contexts/AuthContext.jsx";
-import { ensureUserProfile, signInWithGoogle } from "../services/auth.js";
+import { startGoogleSignIn } from "../services/auth.js";
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { user, profile, loading, refreshProfile } = useAuth();
+  const { user, profile, loading } = useAuth();
   const [studentLoading, setStudentLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -22,14 +22,11 @@ export default function LoginPage() {
     setError("");
     setStudentLoading(true);
     try {
-      const fbUser = await signInWithGoogle();
-      await ensureUserProfile(fbUser, "student");
-      const p = await refreshProfile();
-      navigate(p?.role === "teacher" ? "/teacher" : "/student", { replace: true });
+      // 페이지가 Google로 이동 → 복귀 후 AuthProvider가 자동으로 profile 생성/로딩
+      await startGoogleSignIn("student");
     } catch (e) {
       console.error(e);
       setError("로그인에 실패했습니다. 다시 시도해주세요.");
-    } finally {
       setStudentLoading(false);
     }
   };

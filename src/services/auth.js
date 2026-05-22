@@ -1,14 +1,39 @@
 import {
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut as fbSignOut,
   onAuthStateChanged as fbOnAuthStateChanged,
 } from "firebase/auth";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider } from "../firebase.js";
 
-export async function signInWithGoogle() {
-  const cred = await signInWithPopup(auth, googleProvider);
-  return cred.user;
+const PENDING_ROLE_KEY = "pendingAuthRole";
+
+// 페이지가 Google로 이동하기 직전, role(student/teacher)을 보관해두고
+// 복귀 후 consumeRedirectResult()에서 다시 꺼내 ensureUserProfile에 넘긴다.
+// signInWithPopup 대비 장점: COOP/window.closed 차단 영향 없음.
+export function startGoogleSignIn(role) {
+  try {
+    sessionStorage.setItem(PENDING_ROLE_KEY, role);
+  } catch {
+    // sessionStorage 비활성(시크릿 모드 일부 등) — 무시
+  }
+  return signInWithRedirect(auth, googleProvider);
+}
+
+// 페이지 로드 시 1회 호출. 리다이렉트 복귀가 아니면 null 반환.
+export async function consumeRedirectResult() {
+  const result = await getRedirectResult(auth);
+  if (!result) return null;
+
+  let pendingRole = null;
+  try {
+    pendingRole = sessionStorage.getItem(PENDING_ROLE_KEY);
+    sessionStorage.removeItem(PENDING_ROLE_KEY);
+  } catch {
+    // ignore
+  }
+  return { user: result.user, pendingRole };
 }
 
 export async function signOut() {
