@@ -22,11 +22,13 @@ export default function LoginPage() {
     setError("");
     setStudentLoading(true);
     try {
-      // 페이지가 Google로 이동 → 복귀 후 AuthProvider가 자동으로 profile 생성/로딩
+      // popup 성공 시 onAuthStateChanged → useEffect가 navigate.
+      // popup 닫힘/차단 시 startGoogleSignIn이 정상 return하므로 finally에서 로딩 해제.
       await startGoogleSignIn("student");
     } catch (e) {
       console.error(e);
       setError("로그인에 실패했습니다. 다시 시도해주세요.");
+    } finally {
       setStudentLoading(false);
     }
   };

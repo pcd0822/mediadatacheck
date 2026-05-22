@@ -1,4 +1,5 @@
 import {
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signOut as fbSignOut,
@@ -9,16 +10,34 @@ import { auth, db, googleProvider } from "../firebase.js";
 
 const PENDING_ROLE_KEY = "pendingAuthRole";
 
-// 페이지가 Google로 이동하기 직전, role(student/teacher)을 보관해두고
-// 복귀 후 consumeRedirectResult()에서 다시 꺼내 ensureUserProfile에 넘긴다.
-// signInWithPopup 대비 장점: COOP/window.closed 차단 영향 없음.
-export function startGoogleSignIn(role) {
+// Popup 우선, 차단된 환경에서만 redirect로 폴백.
+// signInWithRedirect는 Firebase v10에서 authDomain != site domain + 3rd-party
+// 쿠키/스토리지 차단 환경(iOS Safari, Chrome 일부 설정)에서 복귀 후 user가
+// 복원되지 않는 알려진 이슈가 있어, 기본 경로를 popup으로 둔다.
+// popup이 성공하면 onAuthStateChanged → AuthContext의 pendingRole fallback이
+// 프로필을 부트스트랩한다.
+export async function startGoogleSignIn(role) {
   try {
     sessionStorage.setItem(PENDING_ROLE_KEY, role);
   } catch {
     // sessionStorage 비활성(시크릿 모드 일부 등) — 무시
   }
-  return signInWithRedirect(auth, googleProvider);
+  try {
+    await signInWithPopup(auth, googleProvider);
+    return { mode: "popup" };
+  } catch (e) {
+    const code = e?.code;
+    // 사용자가 popup을 직접 닫음 → 조용히 종료(에러 throw 안 함)
+    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+      try { sessionStorage.removeItem(PENDING_ROLE_KEY); } catch {}
+      return { mode: "cancelled" };
+    }
+    // popup이 차단되었거나 환경 지원 불가 → redirect로 폴백 (페이지 이동)
+    if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
+      return signInWithRedirect(auth, googleProvider);
+    }
+    throw e;
+  }
 }
 
 // getRedirectResult가 null을 돌려주는 환경(iOS Safari, 3rd-party 쿠키 차단 등)에서도
