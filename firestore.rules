@@ -1,0 +1,89 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ====== 헬퍼 ======
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    // users/{uid}.role 을 읽어 교사 여부 판단.
+    // get()은 규칙 엔진 내에서 다른 문서를 직접 조회하므로
+    // users 문서의 read 규칙(자기만)에 막히지 않는다.
+    function isTeacher() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "teacher";
+    }
+
+    // ====== users/{uid} : 본인 프로필 ======
+    match /users/{uid} {
+      allow read: if isSelf(uid);
+
+      // 최초 생성: 본인 UID, role은 student/teacher 중 하나만 허용
+      allow create: if isSelf(uid)
+                    && request.resource.data.role in ["student", "teacher"];
+
+      // 갱신: 본인만, role은 변경 불가(최초 1회 확정)
+      allow update: if isSelf(uid)
+                    && request.resource.data.role == resource.data.role;
+
+      // 삭제 금지
+      allow delete: if false;
+
+      // 학생 체크리스트
+      match /checklists/{checklistId} {
+        allow read, write: if isSelf(uid);
+      }
+
+      // VAPM 알고리즘 모델 + 하위 training_data
+      match /algorithm_model/{docId} {
+        allow read, write: if isSelf(uid);
+
+        match /training_data/{dataId} {
+          allow read, write: if isSelf(uid);
+        }
+      }
+
+      // 메타인지 피드백 카드
+      match /feedback_cards/{cardId} {
+        allow read, write: if isSelf(uid);
+      }
+
+      // 팩트체크 이력
+      match /factcheck_history/{historyId} {
+        allow read, write: if isSelf(uid);
+      }
+    }
+
+    // ====== media_items/{mediaId} : 교사가 등록한 미디어 ======
+    match /media_items/{mediaId} {
+      // 학생도 미디어 목록/본문을 봐야 하므로 로그인 사용자 전체 읽기 허용
+      allow read: if isSignedIn();
+
+      // 작성/수정/삭제는 교사만
+      allow create: if isTeacher()
+                    && request.resource.data.uploadedBy == request.auth.uid;
+      allow update, delete: if isTeacher();
+
+      // 교사 평가(미디어당 1건, docId='default')
+      match /teacher_evaluation/{docId} {
+        allow read: if isSignedIn();   // 학생 모델링 페이지가 읽어야 함
+        allow write: if isTeacher();
+      }
+
+      // 학생 평가(미디어×학생별 1건, docId = 학생 uid)
+      match /student_evaluations/{evalUid} {
+        allow read, write: if isSelf(evalUid);
+      }
+    }
+
+    // 그 외 모든 경로 차단
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
