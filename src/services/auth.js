@@ -22,18 +22,24 @@ export function startGoogleSignIn(role) {
 }
 
 // 페이지 로드 시 1회 호출. 리다이렉트 복귀가 아니면 null 반환.
-export async function consumeRedirectResult() {
-  const result = await getRedirectResult(auth);
-  if (!result) return null;
-
-  let pendingRole = null;
-  try {
-    pendingRole = sessionStorage.getItem(PENDING_ROLE_KEY);
-    sessionStorage.removeItem(PENDING_ROLE_KEY);
-  } catch {
-    // ignore
-  }
-  return { user: result.user, pendingRole };
+// StrictMode가 effect를 두 번 실행해도 같은 결과를 돌려주도록 캐시.
+// (getRedirectResult는 1회만 소비되므로 두 번째 호출은 null을 반환하는 문제 회피)
+let redirectPromise = null;
+export function consumeRedirectResult() {
+  if (redirectPromise) return redirectPromise;
+  redirectPromise = (async () => {
+    const result = await getRedirectResult(auth);
+    if (!result) return null;
+    let pendingRole = null;
+    try {
+      pendingRole = sessionStorage.getItem(PENDING_ROLE_KEY);
+      sessionStorage.removeItem(PENDING_ROLE_KEY);
+    } catch {
+      // ignore
+    }
+    return { user: result.user, pendingRole };
+  })();
+  return redirectPromise;
 }
 
 export async function signOut() {
