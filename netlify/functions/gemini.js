@@ -142,6 +142,29 @@ async function fetchImageInline(imageUrl) {
   return { mimeType: contentType, data: buf.toString("base64") };
 }
 
+// Gemini가 일시적으로 돌려주는 상태 코드. 재시도하면 대개 회복됨.
+//  429 rate limit / 500 internal / 502 bad gateway / 503 overloaded / 504 timeout
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 3;
+const BASE_BACKOFF_MS = 400;
+// Netlify 함수 기본 timeout(10초)을 넘기지 않도록 백오프 상한을 짧게 둔다.
+const MAX_BACKOFF_MS = 2000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 지수 백오프 + 지터. Retry-After 헤더가 있으면 그 값을 우선하되 상한으로 캡한다. */
+function backoffDelay(attempt, retryAfterHeader) {
+  const retryAfterSec = Number(retryAfterHeader);
+  if (Number.isFinite(retryAfterSec) && retryAfterSec > 0) {
+    return Math.min(retryAfterSec * 1000, MAX_BACKOFF_MS);
+  }
+  const expo = BASE_BACKOFF_MS * 2 ** (attempt - 1);
+  const jitter = Math.random() * BASE_BACKOFF_MS;
+  return Math.min(expo + jitter, MAX_BACKOFF_MS);
+}
+
 async function callGemini(apiKey, prompt, inlineImage) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent?key=${apiKey}`;
   const parts = [{ text: prompt }];
@@ -153,34 +176,75 @@ async function callGemini(apiKey, prompt, inlineImage) {
       },
     });
   }
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        temperature: 0.3,
-        responseMimeType: "application/json",
-      },
-    }),
+  const requestBody = JSON.stringify({
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      temperature: 0.3,
+      responseMimeType: "application/json",
+    },
   });
-  if (!res.ok) {
-    const errText = await res.text();
-    const err = new Error("Gemini API 오류");
-    err.status = res.status;
-    err.detail = errText;
-    throw err;
+
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: requestBody,
+      });
+    } catch (networkErr) {
+      // 네트워크/연결 단절 — 일시적일 수 있으니 재시도
+      lastError = Object.assign(new Error("Gemini API 연결에 실패했어요."), {
+        status: 503,
+        detail: String(networkErr?.message ?? networkErr),
+      });
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(backoffDelay(attempt));
+        continue;
+      }
+      throw lastError;
+    }
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      if (RETRYABLE_STATUS.has(res.status) && attempt < MAX_ATTEMPTS) {
+        lastError = Object.assign(new Error("Gemini API 일시 오류"), {
+          status: res.status,
+          detail: errText,
+        });
+        await sleep(backoffDelay(attempt, res.headers.get("retry-after")));
+        continue;
+      }
+      const err = new Error(
+        res.status === 429
+          ? "AI 요청이 잠시 몰렸어요. 잠시 후 다시 시도해주세요."
+          : "Gemini API 오류"
+      );
+      err.status = res.status;
+      err.detail = errText;
+      throw err;
+    }
+
+    const data = await res.json().catch(() => null);
+    const text =
+      data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
+    const parsed = extractJson(text);
+    if (parsed) return parsed;
+
+    // 빈 응답·잘림·안전 필터 등으로 파싱 실패 — 일시적인 경우가 많아 재시도
+    lastError = Object.assign(new Error("Gemini 응답 파싱 실패"), {
+      status: 502,
+      detail: (text || JSON.stringify(data ?? {})).slice(0, 500),
+    });
+    if (attempt < MAX_ATTEMPTS) {
+      await sleep(backoffDelay(attempt));
+      continue;
+    }
+    throw lastError;
   }
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
-  const parsed = extractJson(text);
-  if (!parsed) {
-    const err = new Error("Gemini 응답 파싱 실패");
-    err.status = 502;
-    err.detail = text;
-    throw err;
-  }
-  return parsed;
+
+  throw lastError ?? new Error("Gemini 호출 실패");
 }
 
 const VALID_DIMS = ["V1", "V2", "V3", "V4", "V5", "V6"];
