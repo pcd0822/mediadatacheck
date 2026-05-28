@@ -248,9 +248,14 @@ export default function ResultPage() {
       }
       subtitle={`미디어 제목: ${history.media?.title ?? "(제목 없음)"}`}
       actions={
-        <Button variant="secondary" onClick={() => navigate("/student")}>
-          ← 대시보드
-        </Button>
+        <>
+          <Button variant="secondary" onClick={() => navigate("/student")}>
+            ← 대시보드
+          </Button>
+          <Button variant="primary" onClick={() => navigate("/student/factcheck")}>
+            다른 자료 팩트체크하기 →
+          </Button>
+        </>
       }
     >
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">

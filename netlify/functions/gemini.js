@@ -176,12 +176,21 @@ async function callGemini(apiKey, prompt, inlineImage) {
       },
     });
   }
+  const generationConfig = {
+    temperature: 0.2, // 낮춰서 더 결정적·일관된 JSON 산출
+    responseMimeType: "application/json",
+    maxOutputTokens: 4096, // 응답을 묶어 잘림/폭주 방지(5개 행동 JSON엔 충분)
+  };
+  // gemini-2.5-flash 계열은 기본 'thinking'이 출력 토큰 예산을 잠식해
+  // 빈 응답·잘림으로 인한 파싱 실패를 유발할 수 있다. 구조화된 채점 작업엔
+  // thinking 이득이 거의 없고 지연만 늘어나(동시 호출 겹침↑) 비활성화한다.
+  // (pro 계열은 thinking 비활성화를 지원하지 않으므로 손대지 않는다.)
+  if (/flash/i.test(DEFAULT_MODEL)) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
   const requestBody = JSON.stringify({
     contents: [{ role: "user", parts }],
-    generationConfig: {
-      temperature: 0.3,
-      responseMimeType: "application/json",
-    },
+    generationConfig,
   });
 
   let lastError;
