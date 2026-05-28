@@ -13,48 +13,39 @@ export default function JoinGroupPage() {
   const { user, loading } = useAuth();
   const { setActiveWorkspace, refreshGroups } = useWorkspace();
 
-  const [group, setGroup] = useState(null);
-  const [lookupDone, setLookupDone] = useState(false);
+  const [status, setStatus] = useState("idle"); // idle | joining | error
   const [error, setError] = useState("");
   const [signinLoading, setSigninLoading] = useState(false);
-  const [joining, setJoining] = useState(false);
-  const joinedRef = useRef(false);
+  const ranRef = useRef(false);
 
-  // 코드로 모둠 미리보기 (1회 읽기)
+  // Firestore 규칙상 groups 읽기에는 로그인이 필요하다.
+  // 그래서 코드 조회·합류는 반드시 로그인 이후에 수행한다(로그아웃 조회는 권한 거부됨).
   useEffect(() => {
+    if (loading || !user || ranRef.current) return;
+    ranRef.current = true;
+    setStatus("joining");
     (async () => {
       try {
         const g = await getGroupByCode(code);
-        setGroup(g);
-      } catch (e) {
-        console.error(e);
-        setError("모둠 정보를 불러오지 못했어요.");
-      } finally {
-        setLookupDone(true);
-      }
-    })();
-  }, [code]);
-
-  // 로그인되어 있고 모둠이 확인되면 자동 합류 → 해당 모둠 활성화 → 대시보드
-  useEffect(() => {
-    if (loading || !user || !group || joinedRef.current) return;
-    joinedRef.current = true;
-    setJoining(true);
-    (async () => {
-      try {
-        await joinGroup(group, user);
+        if (!g) {
+          setError(
+            `코드 ${String(code).toUpperCase()} 에 해당하는 모둠을 찾을 수 없어요. 링크가 정확한지 조장에게 확인해주세요.`
+          );
+          setStatus("error");
+          return;
+        }
+        await joinGroup(g, user);
         await refreshGroups();
-        setActiveWorkspace({ type: "group", id: group.id, name: group.groupName });
+        setActiveWorkspace({ type: "group", id: g.id, name: g.groupName });
         navigate("/student", { replace: true });
       } catch (e) {
         console.error(e);
-        setError(e.message || "모둠 합류에 실패했어요.");
-        joinedRef.current = false;
-        setJoining(false);
+        setError(e.message || "모둠 합류에 실패했어요. 잠시 후 다시 시도해주세요.");
+        setStatus("error");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, user, group]);
+  }, [loading, user, code]);
 
   const handleSignIn = async () => {
     setError("");
@@ -70,7 +61,7 @@ export default function JoinGroupPage() {
   };
 
   if (loading) return <LoadingOverlay message="사용자 확인 중..." />;
-  if (joining) return <LoadingOverlay message="모둠에 합류하는 중..." />;
+  if (user && status === "joining") return <LoadingOverlay message="모둠에 합류하는 중..." />;
 
   return (
     <div
@@ -91,34 +82,27 @@ export default function JoinGroupPage() {
             <h1 className="font-display text-2xl font-bold tracking-tight text-brand-700">
               모둠 합류
             </h1>
+            <p className="mt-1 text-[11px] font-semibold text-ink-muted">
+              초대 코드 {String(code).toUpperCase()}
+            </p>
           </div>
 
-          {!lookupDone ? (
-            <div className="flex justify-center py-6">
-              <Spinner size={24} />
-            </div>
-          ) : !group ? (
+          {status === "error" ? (
             <div className="space-y-4 text-center">
-              <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                코드 <b>{String(code).toUpperCase()}</b> 에 해당하는 모둠을 찾을 수 없어요.
-                링크가 정확한지 조장에게 확인해주세요.
-              </p>
+              <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>
               <button
                 type="button"
-                onClick={() => navigate("/")}
+                onClick={() => navigate("/student")}
                 className="text-sm font-semibold text-brand-700 hover:underline"
               >
-                처음으로 →
+                대시보드로 →
               </button>
             </div>
-          ) : (
+          ) : !user ? (
             <div className="space-y-5 text-center">
               <p className="text-[15px] leading-relaxed text-ink-variant">
-                <b className="text-ink">{group.groupName}</b> 모둠에 초대받았어요.
-                {group.leaderName ? ` (조장: ${group.leaderName})` : ""}
-              </p>
-              <p className="text-sm text-ink-muted">
-                구글 계정으로 로그인하면 모둠 작업실에 합류해 체크리스트와 팩트체크를 함께 할 수 있어요.
+                모둠 작업실에 초대받았어요. 구글 계정으로 로그인하면
+                체크리스트와 팩트체크를 모둠원과 함께 할 수 있어요.
               </p>
               <button
                 type="button"
@@ -133,12 +117,13 @@ export default function JoinGroupPage() {
                 )}
                 <span>구글로 로그인하고 합류</span>
               </button>
-
               {error && (
-                <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  {error}
-                </p>
+                <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
               )}
+            </div>
+          ) : (
+            <div className="flex justify-center py-6">
+              <Spinner size={24} />
             </div>
           )}
         </div>
