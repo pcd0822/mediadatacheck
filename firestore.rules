@@ -19,6 +19,18 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "teacher";
     }
 
+    // 모둠(group) 협업 작업실 권한 헬퍼.
+    // members 서브문서 존재로 멤버십을 판정 → group 문서 자체 변경 없이 합류/탈퇴 가능.
+    function isGroupMember(groupId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid));
+    }
+    function isGroupLeader(groupId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/groups/$(groupId))
+        && get(/databases/$(database)/documents/groups/$(groupId)).data.leaderUid == request.auth.uid;
+    }
+
     // ====== users/{uid} : 본인 프로필 ======
     match /users/{uid} {
       allow read: if isSelf(uid);
@@ -78,6 +90,52 @@ service cloud.firestore {
       // 학생 평가(미디어×학생별 1건, docId = 학생 uid)
       match /student_evaluations/{evalUid} {
         allow read, write: if isSelf(evalUid);
+      }
+    }
+
+    // ====== groups/{groupId} : 모둠 협업 작업실 ======
+    match /groups/{groupId} {
+      // 공유 코드로 합류 전 조회 + 메타 표시를 위해 로그인 사용자 read 허용
+      allow read: if isSignedIn();
+
+      // 생성자가 곧 조장. leaderUid는 본인이어야 함
+      allow create: if isSignedIn()
+                    && request.resource.data.leaderUid == request.auth.uid;
+
+      // 메타 갱신(활성 checklistId 포인터 등)은 멤버 허용, 단 leaderUid 불변
+      allow update: if isGroupMember(groupId)
+                    && request.resource.data.leaderUid == resource.data.leaderUid;
+
+      // 모둠 삭제는 조장만
+      allow delete: if isGroupLeader(groupId);
+
+      // 멤버십: 본인만 합류/수정, 본인 탈퇴 또는 조장 강퇴
+      match /members/{memberUid} {
+        allow read: if isSignedIn();
+        allow create, update: if isSelf(memberUid);
+        allow delete: if isSelf(memberUid) || isGroupLeader(groupId);
+      }
+
+      // 공유 작업실 데이터: 멤버만 read/write
+      match /checklists/{checklistId} {
+        allow read, write: if isGroupMember(groupId);
+      }
+      match /algorithm_model/{docId} {
+        allow read, write: if isGroupMember(groupId);
+
+        match /training_data/{dataId} {
+          allow read, write: if isGroupMember(groupId);
+        }
+      }
+      match /feedback_cards/{cardId} {
+        allow read, write: if isGroupMember(groupId);
+      }
+      match /factcheck_history/{historyId} {
+        allow read, write: if isGroupMember(groupId);
+      }
+      // single-flight 팩트체크 실행 조정 문서
+      match /factcheck_runs/{runKey} {
+        allow read, write: if isGroupMember(groupId);
       }
     }
 

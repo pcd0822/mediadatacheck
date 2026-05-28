@@ -4,16 +4,22 @@ import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
 import LoadingOverlay from "../../components/Loading/LoadingOverlay.jsx";
 import { useAuth } from "../../contexts/AuthContext.jsx";
+import { useWorkspace } from "../../contexts/WorkspaceContext.jsx";
 import {
+  claimFactCheckRun,
+  completeFactCheckRun,
+  failFactCheckRun,
   getAlgorithmModel,
   getChecklist,
   listChecklists,
-  listFactCheckHistory,
   listMediaItems,
   saveFactCheckHistory,
+  subscribeFactCheckHistory,
+  subscribeFactCheckRun,
 } from "../../services/firestore.js";
 import { evaluateMediaDimensions } from "../../services/gemini.js";
 import { uploadFactCheckImage } from "../../services/storage.js";
+import { cached } from "../../utils/dataCache.js";
 import {
   DIMENSIONS,
   computeFinalScore,
@@ -23,43 +29,92 @@ import {
   scoreVariance,
 } from "../../utils/hpfm.js";
 
+// 같은 입력(미디어)에 대한 모둠 내 중복 Gemini 호출을 막기 위한 결정적 키.
+function hashStr(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i += 1) h = (((h << 5) + h) + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+function factcheckRunKey(form, imageUrl) {
+  const norm = [form.title, form.content, form.link, imageUrl]
+    .map((x) => (x ?? "").trim())
+    .join("");
+  return `fc_${hashStr(norm)}`;
+}
+
 export default function FactCheckPage() {
   const { user } = useAuth();
+  const { activeWorkspace: ws, isGroup } = useWorkspace();
   const navigate = useNavigate();
   const [checklists, setChecklists] = useState([]);
   const [activeChecklistId, setActiveChecklistId] = useState(null);
   const [model, setModel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [waiting, setWaiting] = useState(null); // {by} — 다른 모둠원이 실행 중
+  const [activeRunKey, setActiveRunKey] = useState(null);
   const [error, setError] = useState("");
   const [form, setForm] = useState({ title: "", content: "", link: "" });
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
-  // 교사 카드에서 가져온 썸네일 URL (학생이 새로 업로드하지 않았을 때 V4 평가에 사용)
   const [teacherImageUrl, setTeacherImageUrl] = useState("");
   const [history, setHistory] = useState([]);
   const [teacherMedia, setTeacherMedia] = useState([]);
 
+  // 체크리스트/모델/교사 미디어 로드 (교사 미디어는 세션 캐시)
   useEffect(() => {
+    if (!ws) return;
+    setLoading(true);
     (async () => {
-      setLoading(true);
-      const [cls, m, hist, tm] = await Promise.all([
-        listChecklists(user.uid),
-        getAlgorithmModel(user.uid),
-        listFactCheckHistory(user.uid),
-        listMediaItems(),
+      const [cls, m, tm] = await Promise.all([
+        listChecklists(ws),
+        getAlgorithmModel(ws),
+        cached("mediaItems", () => listMediaItems()),
       ]);
       setChecklists(cls);
       setModel(m);
-      setHistory(hist);
       setTeacherMedia(tm);
-      const initial = m?.checklistId && cls.find((c) => c.id === m.checklistId)
-        ? m.checklistId
-        : cls[0]?.id ?? null;
+      const initial =
+        m?.checklistId && cls.find((c) => c.id === m.checklistId)
+          ? m.checklistId
+          : cls[0]?.id ?? null;
       setActiveChecklistId(initial);
       setLoading(false);
     })();
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws?.type, ws?.id]);
+
+  // 팩트체크 기록 실시간(limit 30) — 모둠원 실행 결과를 서로 즉시 확인
+  useEffect(() => {
+    if (!ws) return undefined;
+    const unsub = subscribeFactCheckHistory(
+      ws,
+      (h) => setHistory(h),
+      { limit: 30, onError: (e) => console.error(e) }
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws?.type, ws?.id]);
+
+  // 다른 모둠원이 실행 중일 때 완료를 구독해 같은 결과로 이동
+  useEffect(() => {
+    if (!isGroup || !activeRunKey || !ws) return undefined;
+    const unsub = subscribeFactCheckRun(ws, activeRunKey, (run) => {
+      if (!run) {
+        setWaiting(null);
+        setActiveRunKey(null);
+        setError("앞선 실행이 중단됐어요. 다시 시도해주세요.");
+        return;
+      }
+      if (run.status === "done" && run.historyId) {
+        setActiveRunKey(null);
+        setWaiting(null);
+        navigate(`/student/result/${run.historyId}`);
+      }
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGroup, activeRunKey, ws?.type, ws?.id]);
 
   const onChange = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -78,7 +133,7 @@ export default function FactCheckPage() {
     }
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
-    setTeacherImageUrl(""); // 학생이 직접 올린 게 우선
+    setTeacherImageUrl("");
     setError("");
   };
 
@@ -94,8 +149,6 @@ export default function FactCheckPage() {
       content: m.content ?? "",
       link: m.link ?? "",
     });
-    // 교사가 등록한 썸네일이 있으면 V4 평가에 같이 쓰도록 가져온다.
-    // 학생이 직접 올린 이미지가 있었다면 그것을 우선 유지.
     if (!imageFile) {
       setTeacherImageUrl(m.thumbnailUrl ?? "");
       setImagePreview(m.thumbnailUrl ?? "");
@@ -106,6 +159,67 @@ export default function FactCheckPage() {
     }
   };
 
+  // Gemini 평가 → 점수 환산 → factcheck_history 저장. historyId 반환.
+  const executeFactCheck = async ({ checklist, imageUrl }) => {
+    const dimsResult = await evaluateMediaDimensions({ ...form, imageUrl });
+    const dimensionScores = {};
+    const dimensionReasons = {};
+    const dimensionRedFlags = {};
+    const dimensionSkipped = {};
+    const fallbacks = [];
+    for (const d of DIMENSIONS) {
+      const entry = dimsResult[d] ?? {};
+      if (entry.skipped === true || entry.score === null) {
+        dimensionScores[d] = null;
+        dimensionSkipped[d] = true;
+      } else {
+        const raw = Number(entry.score);
+        if (Number.isFinite(raw)) {
+          dimensionScores[d] = Math.max(1, Math.min(5, Math.round(raw)));
+        } else {
+          dimensionScores[d] = 3;
+          fallbacks.push(d);
+        }
+      }
+      dimensionReasons[d] = entry.reason ?? "";
+      if (Array.isArray(entry.redFlags) && entry.redFlags.length) {
+        dimensionRedFlags[d] = entry.redFlags;
+      }
+    }
+    const usableCount = DIMENSIONS.filter(
+      (d) => Number.isFinite(dimensionScores[d]) && !fallbacks.includes(d)
+    ).length;
+    if (usableCount === 0) {
+      throw new Error(
+        "AI 평가 결과를 읽지 못했어요. 본문이 너무 짧거나 일시적인 오류일 수 있어요. 본문을 좀 더 길게 입력하거나 잠시 후 다시 시도해주세요."
+      );
+    }
+
+    const weights = model?.weights ?? initialWeights();
+    const totalScore = computeFinalScore(weights, dimensionScores);
+    const variance = scoreVariance(weights, dimensionScores);
+    const ci95 = confidenceInterval95(totalScore, variance);
+
+    return saveFactCheckHistory(ws, {
+      media: { ...form, imageUrl: imageUrl || "" },
+      checklistId: activeChecklistId,
+      checklistSnapshot: checklist.items,
+      dimensionScores,
+      dimensionReasons,
+      dimensionRedFlags,
+      dimensionSkipped,
+      weightsSnapshot: weights,
+      totalScore,
+      variance,
+      confidenceInterval95: ci95,
+      accepted: false,
+      createdByUid: user.uid,
+      createdByName: user.displayName ?? null,
+      version: "VAPM-3.0",
+      standard_basis: "5_verification_actions",
+    });
+  };
+
   const handleRun = async () => {
     setError("");
     if (!activeChecklistId) return setError("체크리스트를 먼저 선택해주세요.");
@@ -114,74 +228,44 @@ export default function FactCheckPage() {
     }
     setRunning(true);
     try {
-      const checklist = await getChecklist(user.uid, activeChecklistId);
+      const checklist = await getChecklist(ws, activeChecklistId);
       if (!checklist) throw new Error("체크리스트를 찾을 수 없습니다.");
 
-      // 학생이 직접 올린 이미지가 있으면 Storage에 업로드 → URL 확보.
-      // 없고 교사 썸네일을 가져왔다면 그 URL을 그대로 사용.
       let imageUrl = teacherImageUrl;
-      if (imageFile) {
-        imageUrl = await uploadFactCheckImage(imageFile, user.uid);
-      }
+      if (imageFile) imageUrl = await uploadFactCheckImage(imageFile, user.uid);
 
-      const dimsResult = await evaluateMediaDimensions({ ...form, imageUrl });
-      const dimensionScores = {};
-      const dimensionReasons = {};
-      const dimensionRedFlags = {};
-      const dimensionSkipped = {};
-      const fallbacks = [];
-      for (const d of DIMENSIONS) {
-        const entry = dimsResult[d] ?? {};
-        if (entry.skipped === true || entry.score === null) {
-          // V4 N/A: 점수 없이 보존, 최종 점수 산출에서 자동 제외됨
-          dimensionScores[d] = null;
-          dimensionSkipped[d] = true;
-        } else {
-          const raw = Number(entry.score);
-          if (Number.isFinite(raw)) {
-            dimensionScores[d] = Math.max(1, Math.min(5, Math.round(raw)));
-          } else {
-            dimensionScores[d] = 3;
-            fallbacks.push(d);
-          }
+      if (isGroup) {
+        // single-flight: 같은 미디어는 모둠 전체에서 1회만 Gemini 호출
+        const runKey = factcheckRunKey(form, imageUrl);
+        const decision = await claimFactCheckRun(ws, runKey, {
+          uid: user.uid,
+          name: user.displayName ?? null,
+        });
+        if (decision.role === "reuse") {
+          navigate(`/student/result/${decision.historyId}`);
+          return;
         }
-        dimensionReasons[d] = entry.reason ?? "";
-        if (Array.isArray(entry.redFlags) && entry.redFlags.length) {
-          dimensionRedFlags[d] = entry.redFlags;
+        if (decision.role === "wait") {
+          // 다른 모둠원이 실행 중 — 완료되면 구독 effect가 이동시킴
+          setWaiting({ by: decision.claimedByName });
+          setActiveRunKey(runKey);
+          setRunning(false);
+          return;
         }
+        // role === "run": 내가 실행자
+        try {
+          const historyId = await executeFactCheck({ checklist, imageUrl });
+          await completeFactCheckRun(ws, runKey, historyId);
+          navigate(`/student/result/${historyId}`);
+        } catch (e) {
+          await failFactCheckRun(ws, runKey); // claim 해제 → 재시도 가능
+          throw e;
+        }
+        return;
       }
-      // 모든 행동이 fallback 또는 skipped라면 응답이 사실상 비어있는 상태 — 저장하지 않고 종료
-      const usableCount = DIMENSIONS.filter(
-        (d) => Number.isFinite(dimensionScores[d]) && !fallbacks.includes(d)
-      ).length;
-      if (usableCount === 0) {
-        throw new Error(
-          "AI 평가 결과를 읽지 못했어요. 본문이 너무 짧거나 일시적인 오류일 수 있어요. 본문을 좀 더 길게 입력하거나 잠시 후 다시 시도해주세요."
-        );
-      }
 
-      const weights = model?.weights ?? initialWeights();
-      const totalScore = computeFinalScore(weights, dimensionScores);
-      const variance = scoreVariance(weights, dimensionScores);
-      const ci95 = confidenceInterval95(totalScore, variance);
-
-      const historyId = await saveFactCheckHistory(user.uid, {
-        media: { ...form, imageUrl: imageUrl || "" },
-        checklistId: activeChecklistId,
-        checklistSnapshot: checklist.items,
-        dimensionScores,
-        dimensionReasons,
-        dimensionRedFlags,
-        dimensionSkipped,
-        weightsSnapshot: weights,
-        totalScore,
-        variance,
-        confidenceInterval95: ci95,
-        accepted: false,
-        version: "VAPM-3.0",
-        standard_basis: "5_verification_actions",
-      });
-
+      // 개인 작업실: 직접 실행
+      const historyId = await executeFactCheck({ checklist, imageUrl });
       navigate(`/student/result/${historyId}`);
     } catch (e) {
       console.error(e);
@@ -207,11 +291,16 @@ export default function FactCheckPage() {
   }
 
   const cold = isColdStart(model?.trainingDataCount ?? 0);
+  const busy = running || !!waiting;
 
   return (
     <Layout
       title="미디어 팩트체크"
-      subtitle="AI가 5대 검증 행동(출처·저자·콘텐츠·이미지·감정)으로 미디어를 1~5점으로 평가하고, 내 가중치를 적용해 50점 만점으로 보여줘요"
+      subtitle={
+        isGroup
+          ? `모둠 작업실 · ${ws?.name ?? "우리 모둠"} — 같은 미디어는 모둠에서 한 번만 AI 호출해요`
+          : "AI가 5대 검증 행동(출처·저자·콘텐츠·이미지·감정)으로 미디어를 1~5점으로 평가하고, 내 가중치를 적용해 50점 만점으로 보여줘요"
+      }
       actions={<Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>}
     >
       <div className="card grid gap-5">
@@ -228,7 +317,7 @@ export default function FactCheckPage() {
           </select>
           {cold && (
             <p className="mt-2 text-xs text-amber-700">
-              ※ 아직 평가가 적게 쌓여 있어요(현재 {model?.trainingDataCount ?? 0}개). 지금은 5대 검증 행동을 똑같이 보고 점수를 계산해요. "기준 다듬기"를 더 진행하면 너만의 기준이 반영됩니다.
+              ※ 아직 평가가 적게 쌓여 있어요(현재 {model?.trainingDataCount ?? 0}개). 지금은 5대 검증 행동을 똑같이 보고 점수를 계산해요. "기준 다듬기"를 더 진행하면 {isGroup ? "모둠" : "너"}만의 기준이 반영됩니다.
             </p>
           )}
         </div>
@@ -285,7 +374,7 @@ export default function FactCheckPage() {
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
 
         <div className="flex justify-end">
-          <Button variant="primary" onClick={handleRun} loading={running}>팩트체크 실행</Button>
+          <Button variant="primary" onClick={handleRun} loading={busy} disabled={busy}>팩트체크 실행</Button>
         </div>
       </div>
 
@@ -324,9 +413,13 @@ export default function FactCheckPage() {
       <section className="mt-8">
         <div className="mb-3 flex items-end justify-between">
           <div>
-            <h2 className="text-lg font-bold text-slate-900">내가 등록한 미디어</h2>
+            <h2 className="text-lg font-bold text-slate-900">
+              {isGroup ? "우리 모둠 팩트체크" : "내가 등록한 미디어"}
+            </h2>
             <p className="text-xs text-slate-500">
-              지금까지 팩트체크한 자료들이에요. 카드를 클릭하면 결과 화면으로 이동합니다.
+              {isGroup
+                ? "모둠원이 실행한 팩트체크가 모두 모여요. 카드를 클릭하면 결과 화면으로 이동합니다."
+                : "지금까지 팩트체크한 자료들이에요. 카드를 클릭하면 결과 화면으로 이동합니다."}
             </p>
           </div>
           {history.length > 0 && (
@@ -344,6 +437,7 @@ export default function FactCheckPage() {
               <HistoryCard
                 key={h.id}
                 item={h}
+                showAuthor={isGroup}
                 onClick={() => navigate(`/student/result/${h.id}`)}
               />
             ))}
@@ -352,6 +446,11 @@ export default function FactCheckPage() {
       </section>
 
       {running && <LoadingOverlay message="AI 친구가 5대 검증 행동으로 미디어를 살펴보고 있어요..." />}
+      {waiting && (
+        <LoadingOverlay
+          message={`${waiting.by ?? "모둠원"}이(가) 같은 미디어를 팩트체크하고 있어요. 결과를 함께 받는 중...`}
+        />
+      )}
     </Layout>
   );
 }
@@ -393,7 +492,7 @@ function TeacherMediaCard({ item, onClick }) {
   );
 }
 
-function HistoryCard({ item, onClick }) {
+function HistoryCard({ item, onClick, showAuthor }) {
   const score = Number(item.finalTotalScore ?? item.totalScore ?? 0);
   const ci = item.confidenceInterval95;
   const created = item.createdAt?.toDate?.() ?? null;
@@ -421,6 +520,10 @@ function HistoryCard({ item, onClick }) {
       <p className="line-clamp-3 text-xs leading-5 text-slate-600">
         {item.media?.content || ""}
       </p>
+
+      {showAuthor && item.createdByName && (
+        <p className="text-[11px] text-slate-400">실행: {item.createdByName}</p>
+      )}
 
       <div className="mt-auto flex items-end justify-between gap-2 border-t border-slate-100 pt-3">
         <div>

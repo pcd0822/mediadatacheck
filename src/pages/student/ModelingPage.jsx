@@ -4,9 +4,9 @@ import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
 import { SkeletonList } from "../../components/Loading/Skeleton.jsx";
 import { useAuth } from "../../contexts/AuthContext.jsx";
+import { useWorkspace } from "../../contexts/WorkspaceContext.jsx";
 import {
   appendTrainingData,
-  clearTrainingData,
   getAlgorithmModel,
   getStudentEvaluation,
   listChecklists,
@@ -16,6 +16,7 @@ import {
   saveStudentEvaluation,
   updateChecklist,
 } from "../../services/firestore.js";
+import { cached, invalidate } from "../../utils/dataCache.js";
 import {
   DIMENSION_INFO,
   aggregateToDimensions,
@@ -37,6 +38,7 @@ import { ensureItemMappings } from "../../utils/mappingCache.js";
 
 export default function ModelingPage() {
   const { user } = useAuth();
+  const { activeWorkspace: ws, isGroup } = useWorkspace();
   const navigate = useNavigate();
   const [checklists, setChecklists] = useState([]);
   const [activeChecklistId, setActiveChecklistId] = useState(null);
@@ -54,12 +56,14 @@ export default function ModelingPage() {
   );
 
   useEffect(() => {
+    if (!ws) return;
     (async () => {
       setLoading(true);
+      // 교사 미디어+평가는 세션 캐시(read-through)로 화면 전환마다 재요청하지 않음
       const [cls, mediaItems, existingModel] = await Promise.all([
-        listChecklists(user.uid),
-        listTeacherMediaWithTeacherEvals(),
-        getAlgorithmModel(user.uid),
+        listChecklists(ws),
+        cached("teacherMediaWithEvals", () => listTeacherMediaWithTeacherEvals()),
+        getAlgorithmModel(ws),
       ]);
       setChecklists(cls);
       setMedia(mediaItems);
@@ -71,14 +75,18 @@ export default function ModelingPage() {
       setActiveChecklistId(initial);
       setLoading(false);
     })();
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws?.type, ws?.id]);
 
   useEffect(() => {
     if (!activeChecklistId || media.length === 0) return;
     (async () => {
       const next = {};
       for (const m of media) {
-        const ev = await getStudentEvaluation(m.id, user.uid);
+        // 내가 이전에 매긴 점수(미디어×본인). 세션 캐시로 중복 읽기 방지.
+        const ev = await cached(`studentEval:${m.id}:${user.uid}`, () =>
+          getStudentEvaluation(m.id, user.uid)
+        );
         if (ev?.checklistId === activeChecklistId && ev?.items) {
           next[m.id] = ev.items;
         }
@@ -135,7 +143,11 @@ export default function ModelingPage() {
       const itemsChanged =
         JSON.stringify(refreshedItems) !== JSON.stringify(activeChecklist.items);
       if (itemsChanged) {
-        await updateChecklist(user.uid, activeChecklistId, { items: refreshedItems });
+        await updateChecklist(ws, activeChecklistId, {
+          items: refreshedItems,
+          lastEditedBy: user.uid,
+          lastEditedName: user.displayName ?? null,
+        });
       }
       const checklistItems = refreshedItems;
 
@@ -149,6 +161,7 @@ export default function ModelingPage() {
           checklistId: activeChecklistId,
           dimensionScores: studentDims,
         });
+        invalidate(`studentEval:${m.id}:${user.uid}`);
         const rawTeacherDims = m.teacherEvaluation?.dimensionScores;
         const teacherDims = isLegacyDimMap(rawTeacherDims)
           ? migrateLegacyDimensionScores(rawTeacherDims)
@@ -184,12 +197,12 @@ export default function ModelingPage() {
       const teacherImplicit = teacherImplicitWeights(teacherDimsList);
       const conv = convergenceScore(weights, teacherImplicit);
 
-      await clearTrainingData(user.uid);
       const gapHistory = [];
       for (const p of pairs) {
         const gap = computeGap(p.studentDims, p.teacherDims);
         gapHistory.push(gap);
-        await appendTrainingData(user.uid, `media_${p.mediaId}`, {
+        // 결정적 id에 upsert(merge) — 삭제 폭풍 없이 같은 미디어는 덮어쓰기
+        await appendTrainingData(ws, `media_${p.mediaId}`, {
           mediaId: p.mediaId,
           checklistId: activeChecklistId,
           studentDimensionScores: p.studentDims,
@@ -199,7 +212,7 @@ export default function ModelingPage() {
         });
       }
       const cards = generateFeedbackCards(gapHistory);
-      await replaceFeedbackCards(user.uid, cards);
+      await replaceFeedbackCards(ws, cards);
 
       const mastery = computeMastery(weights, gapHistory);
       const trained = {
@@ -211,7 +224,7 @@ export default function ModelingPage() {
         teacherImplicitWeights: teacherImplicit,
         learningRate: learningRate(totalCount),
       };
-      await saveAlgorithmModel(user.uid, trained);
+      await saveAlgorithmModel(ws, trained);
       setModel(trained);
       setJustFinished(true);
     } catch (e) {
@@ -263,7 +276,11 @@ export default function ModelingPage() {
   return (
     <Layout
       title="내 평가 기준 다듬기"
-      subtitle="여러 미디어를 평가하면서 내 평가 기준을 조금씩 다듬어요"
+      subtitle={
+        isGroup
+          ? `모둠 작업실 · ${ws?.name ?? "우리 모둠"} — 모둠 공동 기준을 함께 다듬어요`
+          : "여러 미디어를 평가하면서 내 평가 기준을 조금씩 다듬어요"
+      }
       actions={
         <>
           <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>

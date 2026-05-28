@@ -4,6 +4,7 @@ import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
 import LoadingOverlay from "../../components/Loading/LoadingOverlay.jsx";
 import { useAuth } from "../../contexts/AuthContext.jsx";
+import { useWorkspace } from "../../contexts/WorkspaceContext.jsx";
 import {
   appendTrainingData,
   getAlgorithmModel,
@@ -11,6 +12,7 @@ import {
   listTrainingData,
   replaceFeedbackCards,
   saveAlgorithmModel,
+  updateAlgorithmModel,
   updateFactCheckHistory,
 } from "../../services/firestore.js";
 import {
@@ -33,6 +35,7 @@ import {
 export default function ResultPage() {
   const { historyId } = useParams();
   const { user } = useAuth();
+  const { activeWorkspace: ws } = useWorkspace();
   const navigate = useNavigate();
   const [history, setHistory] = useState(null);
   const [scores, setScores] = useState({});
@@ -46,8 +49,8 @@ export default function ResultPage() {
     (async () => {
       setLoading(true);
       const [h, m] = await Promise.all([
-        getFactCheckHistory(user.uid, historyId),
-        getAlgorithmModel(user.uid),
+        getFactCheckHistory(ws, historyId),
+        getAlgorithmModel(ws),
       ]);
       setHistory(h);
       setModel(m);
@@ -66,7 +69,8 @@ export default function ResultPage() {
       setScores(cleaned);
       setLoading(false);
     })();
-  }, [historyId, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyId, ws?.type, ws?.id]);
 
   // 학생 대시보드와 항상 같은 비중을 표시하도록 현재 model.weights를 우선 사용한다.
   // history.weightsSnapshot은 저장 시점(학습 전일 수 있음)의 값이라 정교화·수용 이후엔 stale.
@@ -104,7 +108,8 @@ export default function ResultPage() {
       if (Number.isFinite(a) && Number.isFinite(g)) gap[d] = a - g;
     }
 
-    await appendTrainingData(user.uid, dataId, {
+    // 학습 데이터 1건 upsert(결정적 id)
+    await appendTrainingData(ws, dataId, {
       historyId,
       checklistId: history.checklistId,
       mediaTitle: history.media?.title ?? null,
@@ -115,62 +120,54 @@ export default function ResultPage() {
       source: refined ? "refine" : "accept",
     });
 
-    const tCount = (model?.trainingDataCount ?? 0) + 1;
-    let nextWeights = model?.weights ?? initialWeights();
-    if (refined) {
-      nextWeights = bayesianUpdate(
-        nextWeights,
-        { dimensionScores: scores, gap },
-        { trainingDataCount: model?.trainingDataCount ?? 0, refineMultiplier: 1.5 }
-      );
-    } else {
-      nextWeights = bayesianUpdate(
-        nextWeights,
-        { dimensionScores: scores, gap: {} },
-        { trainingDataCount: model?.trainingDataCount ?? 0 }
-      );
-    }
-
-    const teacherImplicit = model?.teacherImplicitWeights ?? null;
-    const conv = teacherImplicit
-      ? convergenceScore(nextWeights, teacherImplicit)
-      : model?.convergenceScore ?? null;
-
-    await saveAlgorithmModel(user.uid, {
-      weights: nextWeights,
-      checklistId: model?.checklistId ?? history.checklistId,
-      trainingDataCount: tCount,
-      convergenceScore: conv,
-      teacherImplicitWeights: teacherImplicit,
-      learningRate: learningRate(tCount),
-    });
-
-    setModel((m) => ({
-      ...(m ?? {}),
-      weights: nextWeights,
-      trainingDataCount: tCount,
-      convergenceScore: conv,
-    }));
-
-    // 누적 학습 데이터의 격차 패턴으로 메타인지 피드백 카드 + 검증 행동별 마스터리 재계산
-    try {
-      const trainings = await listTrainingData(user.uid);
-      const gapHistory = trainings
-        .map((t) => t.gap)
-        .filter((g) => g && Object.keys(g).length > 0);
-      const cards = generateFeedbackCards(gapHistory);
-      await replaceFeedbackCards(user.uid, cards);
-
-      const mastery = computeMastery(nextWeights, gapHistory);
-      await saveAlgorithmModel(user.uid, {
+    // 모델 누적 갱신을 트랜잭션으로 — 모둠원이 동시에 수용/정교화해도 lost update 방지.
+    // 현재(fresh) 가중치·카운트를 트랜잭션 안에서 읽어 계산한다.
+    const updated = await updateAlgorithmModel(ws, (current) => {
+      const baseWeights =
+        current?.weights && Object.keys(current.weights).length
+          ? current.weights
+          : initialWeights();
+      const tCountPrev = current?.trainingDataCount ?? 0;
+      const nextWeights = refined
+        ? bayesianUpdate(
+            baseWeights,
+            { dimensionScores: scores, gap },
+            { trainingDataCount: tCountPrev, refineMultiplier: 1.5 }
+          )
+        : bayesianUpdate(
+            baseWeights,
+            { dimensionScores: scores, gap: {} },
+            { trainingDataCount: tCountPrev }
+          );
+      const teacherImplicit = current?.teacherImplicitWeights ?? null;
+      const conv = teacherImplicit
+        ? convergenceScore(nextWeights, teacherImplicit)
+        : current?.convergenceScore ?? null;
+      const tCount = tCountPrev + 1;
+      return {
         weights: nextWeights,
-        mastery,
-        checklistId: model?.checklistId ?? history.checklistId,
+        mastery: current?.mastery ?? null,
+        checklistId: current?.checklistId ?? history.checklistId,
         trainingDataCount: tCount,
         convergenceScore: conv,
         teacherImplicitWeights: teacherImplicit,
         learningRate: learningRate(tCount),
-      });
+      };
+    });
+
+    setModel((m) => ({ ...(m ?? {}), ...updated }));
+
+    // 누적 학습 데이터의 격차 패턴으로 메타인지 피드백 카드 + 검증 행동별 마스터리 재계산
+    try {
+      const trainings = await listTrainingData(ws);
+      const gapHistory = trainings
+        .map((t) => t.gap)
+        .filter((g) => g && Object.keys(g).length > 0);
+      const cards = generateFeedbackCards(gapHistory);
+      await replaceFeedbackCards(ws, cards);
+
+      const mastery = computeMastery(updated.weights, gapHistory);
+      await saveAlgorithmModel(ws, { ...updated, mastery });
       setModel((m) => ({ ...(m ?? {}), mastery }));
     } catch (err) {
       console.warn("마스터리·피드백 카드 갱신 실패", err);
@@ -181,7 +178,7 @@ export default function ResultPage() {
     setActing(true);
     try {
       await persistTraining({ refined: false });
-      await updateFactCheckHistory(user.uid, historyId, {
+      await updateFactCheckHistory(ws, historyId, {
         accepted: true,
         finalDimensionScores: scores,
         finalTotalScore: totalScore,
@@ -199,7 +196,7 @@ export default function ResultPage() {
     setActing(true);
     try {
       await persistTraining({ refined: true });
-      await updateFactCheckHistory(user.uid, historyId, {
+      await updateFactCheckHistory(ws, historyId, {
         accepted: true,
         refined: true,
         finalDimensionScores: scores,

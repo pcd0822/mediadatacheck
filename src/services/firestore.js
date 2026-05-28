@@ -5,15 +5,39 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
+  onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase.js";
 
-/* ====================== media_items (교사가 등록) ====================== */
+const MODEL_VERSION = "VAPM-3.0";
+const STANDARD_BASIS = "5_verification_actions";
+
+/* ====================== 워크스페이스 추상화 ======================
+ * 개인(users/{uid})과 모둠(groups/{groupId}) 작업실을 같은 함수로 다루기 위한 디스크립터.
+ *   ws = { type: "user" | "group", id }
+ * 하위호환: uid 문자열을 그대로 넘기면 개인 작업실로 처리.
+ */
+function wsSegments(ws) {
+  if (typeof ws === "string") return ["users", ws];
+  if (ws && ws.type === "group" && ws.id) return ["groups", ws.id];
+  if (ws && ws.id) return ["users", ws.id];
+  throw new Error("유효하지 않은 워크스페이스");
+}
+function wsCol(ws, ...rest) {
+  return collection(db, ...wsSegments(ws), ...rest);
+}
+function wsDoc(ws, ...rest) {
+  return doc(db, ...wsSegments(ws), ...rest);
+}
+
+/* ====================== media_items (교사가 등록, 전역) ====================== */
 
 export async function createMediaItem(teacherUid, data) {
   const ref = await addDoc(collection(db, "media_items"), {
@@ -55,7 +79,7 @@ export async function deleteMediaItem(mediaId) {
   await deleteDoc(doc(db, "media_items", mediaId));
 }
 
-/* ====================== teacher_evaluation ====================== */
+/* ====================== teacher_evaluation (전역) ====================== */
 
 export async function setTeacherEvaluation(mediaId, evaluation) {
   const ref = doc(db, "media_items", mediaId, "teacher_evaluation", "default");
@@ -77,41 +101,60 @@ export async function getTeacherEvaluation(mediaId) {
   return snap.exists() ? snap.data() : null;
 }
 
-/* ====================== users/{uid}/checklists ====================== */
+/* ====================== checklists (워크스페이스 스코프) ====================== */
 
-export async function listChecklists(uid) {
-  const q = query(collection(db, "users", uid, "checklists"), orderBy("createdAt", "desc"));
+export async function listChecklists(ws) {
+  const q = query(wsCol(ws, "checklists"), orderBy("createdAt", "desc"));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function getChecklist(uid, checklistId) {
-  const snap = await getDoc(doc(db, "users", uid, "checklists", checklistId));
+export function subscribeChecklists(ws, cb, onError) {
+  const q = query(wsCol(ws, "checklists"), orderBy("createdAt", "desc"));
+  return onSnapshot(
+    q,
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError
+  );
+}
+
+export async function getChecklist(ws, checklistId) {
+  const snap = await getDoc(wsDoc(ws, "checklists", checklistId));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export async function createChecklist(uid, data) {
-  const ref = await addDoc(collection(db, "users", uid, "checklists"), {
+export function subscribeChecklist(ws, checklistId, cb, onError) {
+  return onSnapshot(
+    wsDoc(ws, "checklists", checklistId),
+    (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+    onError
+  );
+}
+
+export async function createChecklist(ws, data) {
+  const ref = await addDoc(wsCol(ws, "checklists"), {
     checklistName: data.checklistName,
     items: data.items ?? [],
+    lastEditedBy: data.lastEditedBy ?? null,
+    lastEditedName: data.lastEditedName ?? null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-export async function updateChecklist(uid, checklistId, data) {
-  await updateDoc(doc(db, "users", uid, "checklists", checklistId), {
+export async function updateChecklist(ws, checklistId, data) {
+  await updateDoc(wsDoc(ws, "checklists", checklistId), {
     ...data,
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function deleteChecklist(uid, checklistId) {
-  await deleteDoc(doc(db, "users", uid, "checklists", checklistId));
+export async function deleteChecklist(ws, checklistId) {
+  await deleteDoc(wsDoc(ws, "checklists", checklistId));
 }
 
-/* ====================== student_evaluations (모델링 평가) ====================== */
+/* ====================== student_evaluations (미디어×학생, per-uid) ====================== */
 
 export async function saveStudentEvaluation(mediaId, uid, evaluation) {
   const ref = doc(db, "media_items", mediaId, "student_evaluations", uid);
@@ -133,118 +176,212 @@ export async function getStudentEvaluation(mediaId, uid) {
   return snap.exists() ? snap.data() : null;
 }
 
-export async function listStudentEvaluationsForUser(uid) {
-  const mediaSnap = await getDocs(collection(db, "media_items"));
-  const results = [];
-  for (const m of mediaSnap.docs) {
-    const evalSnap = await getDoc(
-      doc(db, "media_items", m.id, "student_evaluations", uid)
-    );
-    if (evalSnap.exists()) {
-      results.push({ mediaId: m.id, ...evalSnap.data() });
-    }
-  }
-  return results;
+/* ====================== algorithm_model (VAPM-3.0, 워크스페이스 스코프) ====================== */
+
+function buildModelDoc(model) {
+  return {
+    version: MODEL_VERSION,
+    standard_basis: STANDARD_BASIS,
+    weights: model.weights ?? null,
+    mastery: model.mastery ?? null,
+    checklistId: model.checklistId ?? null,
+    trainingDataCount: model.trainingDataCount ?? 0,
+    convergenceScore: model.convergenceScore ?? null,
+    teacherImplicitWeights: model.teacherImplicitWeights ?? null,
+    learningRate: model.learningRate ?? null,
+    trainedAt: serverTimestamp(),
+  };
 }
 
-/* ====================== algorithm_model (VAPM-3.0) ====================== */
-
-const MODEL_VERSION = "VAPM-3.0";
-const STANDARD_BASIS = "5_verification_actions";
-
-export async function saveAlgorithmModel(uid, model) {
-  await setDoc(
-    doc(db, "users", uid, "algorithm_model", "current"),
-    {
-      version: MODEL_VERSION,
-      standard_basis: STANDARD_BASIS,
-      weights: model.weights ?? null,
-      mastery: model.mastery ?? null,
-      checklistId: model.checklistId ?? null,
-      trainingDataCount: model.trainingDataCount ?? 0,
-      convergenceScore: model.convergenceScore ?? null,
-      teacherImplicitWeights: model.teacherImplicitWeights ?? null,
-      learningRate: model.learningRate ?? null,
-      trainedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+export async function saveAlgorithmModel(ws, model) {
+  await setDoc(wsDoc(ws, "algorithm_model", "current"), buildModelDoc(model), {
+    merge: true,
+  });
 }
 
-export async function getAlgorithmModel(uid) {
-  const snap = await getDoc(doc(db, "users", uid, "algorithm_model", "current"));
+/**
+ * 모델을 트랜잭션으로 read-modify-write.
+ * 모둠 동시 수용/정교화 시 lost update를 막는다.
+ * @param {function(object|null): object} computeNext 현재 모델 데이터를 받아 다음 모델 필드를 반환
+ */
+export async function updateAlgorithmModel(ws, computeNext) {
+  const ref = wsDoc(ws, "algorithm_model", "current");
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.exists() ? snap.data() : null;
+    const next = computeNext(current);
+    tx.set(ref, buildModelDoc(next), { merge: true });
+    return next;
+  });
+}
+
+export async function getAlgorithmModel(ws) {
+  const snap = await getDoc(wsDoc(ws, "algorithm_model", "current"));
   return snap.exists() ? snap.data() : null;
 }
 
-export async function appendTrainingData(uid, dataId, payload) {
+export function subscribeAlgorithmModel(ws, cb, onError) {
+  return onSnapshot(
+    wsDoc(ws, "algorithm_model", "current"),
+    (snap) => cb(snap.exists() ? snap.data() : null),
+    onError
+  );
+}
+
+export async function appendTrainingData(ws, dataId, payload) {
   await setDoc(
-    doc(db, "users", uid, "algorithm_model", "current", "training_data", dataId),
+    wsDoc(ws, "algorithm_model", "current", "training_data", dataId),
     { ...payload, addedAt: serverTimestamp() },
     { merge: true }
   );
 }
 
-export async function listTrainingData(uid) {
-  const snap = await getDocs(
-    collection(db, "users", uid, "algorithm_model", "current", "training_data")
-  );
+export async function listTrainingData(ws) {
+  const snap = await getDocs(wsCol(ws, "algorithm_model", "current", "training_data"));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function clearTrainingData(uid) {
-  const snap = await getDocs(
-    collection(db, "users", uid, "algorithm_model", "current", "training_data")
+/* ====================== feedback_cards (단일 문서, 쿼터 보호) ======================
+ * 과거: 매 학습/수용마다 컬렉션 전체 delete + N개 addDoc (쓰기/삭제 폭풍).
+ * 현재: feedback_cards/current 한 문서의 cards 배열을 setDoc 1회로 교체.
+ * 카드는 파생/재생성 데이터라 기존 컬렉션 마이그레이션 불필요(다음 학습 시 재생성).
+ */
+export async function replaceFeedbackCards(ws, cards) {
+  await setDoc(wsDoc(ws, "feedback_cards", "current"), {
+    cards: Array.isArray(cards) ? cards : [],
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function listFeedbackCards(ws) {
+  const snap = await getDoc(wsDoc(ws, "feedback_cards", "current"));
+  if (!snap.exists()) return [];
+  const cards = snap.data().cards;
+  return Array.isArray(cards) ? cards : [];
+}
+
+export function subscribeFeedbackCards(ws, cb, onError) {
+  return onSnapshot(
+    wsDoc(ws, "feedback_cards", "current"),
+    (snap) => {
+      const cards = snap.exists() && Array.isArray(snap.data().cards)
+        ? snap.data().cards
+        : [];
+      cb(cards);
+    },
+    onError
   );
-  await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
 }
 
-/* ====================== feedback_cards (VAPM 메타인지 카드) ====================== */
+/* ====================== factcheck_history (워크스페이스 스코프) ====================== */
 
-export async function replaceFeedbackCards(uid, cards) {
-  const colRef = collection(db, "users", uid, "feedback_cards");
-  const existing = await getDocs(colRef);
-  await Promise.all(existing.docs.map((d) => deleteDoc(d.ref)));
-  await Promise.all(
-    cards.map((c) =>
-      addDoc(colRef, { ...c, createdAt: serverTimestamp() })
-    )
-  );
-}
-
-export async function listFeedbackCards(uid) {
-  const snap = await getDocs(collection(db, "users", uid, "feedback_cards"));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-}
-
-/* ====================== factcheck_history ====================== */
-
-export async function saveFactCheckHistory(uid, payload) {
-  const ref = await addDoc(collection(db, "users", uid, "factcheck_history"), {
+export async function saveFactCheckHistory(ws, payload) {
+  const ref = await addDoc(wsCol(ws, "factcheck_history"), {
     ...payload,
     createdAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-export async function getFactCheckHistory(uid, historyId) {
-  const snap = await getDoc(doc(db, "users", uid, "factcheck_history", historyId));
+export async function getFactCheckHistory(ws, historyId) {
+  const snap = await getDoc(wsDoc(ws, "factcheck_history", historyId));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export async function updateFactCheckHistory(uid, historyId, patch) {
-  await updateDoc(doc(db, "users", uid, "factcheck_history", historyId), {
+export function subscribeFactCheckHistoryDoc(ws, historyId, cb, onError) {
+  return onSnapshot(
+    wsDoc(ws, "factcheck_history", historyId),
+    (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+    onError
+  );
+}
+
+export async function updateFactCheckHistory(ws, historyId, patch) {
+  await updateDoc(wsDoc(ws, "factcheck_history", historyId), {
     ...patch,
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function listFactCheckHistory(uid) {
+export async function listFactCheckHistory(ws) {
   const q = query(
-    collection(db, "users", uid, "factcheck_history"),
-    orderBy("createdAt", "desc")
+    wsCol(ws, "factcheck_history"),
+    orderBy("createdAt", "desc"),
+    limit(50)
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/** 무한 증가 컬렉션이라 limit로 묶어 변경당 전체 재읽기를 막는다. */
+export function subscribeFactCheckHistory(ws, cb, opts = {}) {
+  const max = opts.limit ?? 30;
+  const q = query(
+    wsCol(ws, "factcheck_history"),
+    orderBy("createdAt", "desc"),
+    limit(max)
+  );
+  return onSnapshot(
+    q,
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    opts.onError
+  );
+}
+
+/* ====================== factcheck_runs (single-flight 조정) ======================
+ * 한 미디어에 대한 Gemini 호출을 모둠 전체에서 1회로 제한한다.
+ * runKey: 미디어를 식별하는 결정적 키(교사 미디어면 media_{id}, 아니면 본문 해시).
+ */
+const RUN_STALE_MS = 90_000;
+
+/**
+ * @returns {Promise<{role:"reuse"|"wait"|"run", historyId?:string, claimedByName?:string|null}>}
+ */
+export async function claimFactCheckRun(ws, runKey, runner) {
+  const runRef = wsDoc(ws, "factcheck_runs", runKey);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(runRef);
+    const now = Date.now();
+    if (snap.exists()) {
+      const d = snap.data();
+      if (d.status === "done" && d.historyId) {
+        return { role: "reuse", historyId: d.historyId };
+      }
+      const startedMs = d.startedAt?.toMillis ? d.startedAt.toMillis() : 0;
+      if (d.status === "running" && startedMs && now - startedMs < RUN_STALE_MS) {
+        return { role: "wait", claimedByName: d.claimedByName ?? null };
+      }
+    }
+    tx.set(runRef, {
+      status: "running",
+      claimedByUid: runner.uid,
+      claimedByName: runner.name ?? null,
+      startedAt: serverTimestamp(),
+      historyId: null,
+    });
+    return { role: "run" };
+  });
+}
+
+export async function completeFactCheckRun(ws, runKey, historyId) {
+  await setDoc(
+    wsDoc(ws, "factcheck_runs", runKey),
+    { status: "done", historyId, finishedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
+/** 실패 시 claim 해제 → 다른 모둠원이 재시도 가능. */
+export async function failFactCheckRun(ws, runKey) {
+  await deleteDoc(wsDoc(ws, "factcheck_runs", runKey)).catch(() => {});
+}
+
+export function subscribeFactCheckRun(ws, runKey, cb, onError) {
+  return onSnapshot(
+    wsDoc(ws, "factcheck_runs", runKey),
+    (snap) => cb(snap.exists() ? snap.data() : null),
+    onError
+  );
 }
 
 /* ====================== utils ====================== */

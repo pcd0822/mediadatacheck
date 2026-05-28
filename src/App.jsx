@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./contexts/AuthContext.jsx";
+import { WorkspaceProvider } from "./contexts/WorkspaceContext.jsx";
 import LoadingOverlay from "./components/Loading/LoadingOverlay.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import TeacherCodePage from "./pages/TeacherCodePage.jsx";
@@ -11,6 +12,7 @@ import ChecklistEditor from "./pages/student/ChecklistEditor.jsx";
 import ModelingPage from "./pages/student/ModelingPage.jsx";
 import FactCheckPage from "./pages/student/FactCheckPage.jsx";
 import ResultPage from "./pages/student/ResultPage.jsx";
+import JoinGroupPage from "./pages/student/JoinGroupPage.jsx";
 
 function ProtectedRoute({ role, children }) {
   const { user, profile, loading } = useAuth();
@@ -24,9 +26,13 @@ function ProtectedRoute({ role, children }) {
 
 export default function App() {
   return (
+    <WorkspaceProvider>
     <Routes>
       <Route path="/" element={<LoginPage />} />
       <Route path="/teacher-code" element={<TeacherCodePage />} />
+
+      {/* 공유 링크 진입점 — 로그인 여부와 무관하게 페이지에서 처리 */}
+      <Route path="/student/join/:code" element={<JoinGroupPage />} />
 
       <Route
         path="/teacher"
@@ -104,5 +110,6 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </WorkspaceProvider>
   );
 }

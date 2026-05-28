@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
 import { SkeletonList } from "../../components/Loading/Skeleton.jsx";
 import { useAuth } from "../../contexts/AuthContext.jsx";
+import { useWorkspace } from "../../contexts/WorkspaceContext.jsx";
 import {
   createChecklist,
   deleteChecklist,
-  listChecklists,
+  subscribeChecklist,
+  subscribeChecklists,
   updateChecklist,
 } from "../../services/firestore.js";
 import { DIMENSION_INFO } from "../../utils/hpfm.js";
@@ -27,8 +29,11 @@ const blankItem = () => ({
   rubric: { 1: "", 2: "", 3: "", 4: "", 5: "" },
 });
 
+const serialize = (name, items) => JSON.stringify({ name, items });
+
 export default function ChecklistEditor() {
   const { user } = useAuth();
+  const { activeWorkspace, isGroup } = useWorkspace();
   const navigate = useNavigate();
   const [lists, setLists] = useState([]);
   const [activeId, setActiveId] = useState(null);
@@ -37,40 +42,107 @@ export default function ChecklistEditor() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+  const [remoteInfo, setRemoteInfo] = useState(null);
+  const [remoteChanged, setRemoteChanged] = useState(false);
 
-  const refresh = async (selectId) => {
-    setLoading(true);
-    const list = await listChecklists(user.uid);
-    setLists(list);
-    if (selectId) {
-      const found = list.find((l) => l.id === selectId);
-      if (found) loadInto(found);
-    } else if (!activeId && list.length) {
-      loadInto(list[0]);
-    } else if (!list.length) {
-      setActiveId(null);
-      setName("나의 팩트체크 기준");
-      setItems([blankItem()]);
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    if (user) refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  const ws = activeWorkspace;
+  const loadedRef = useRef("");
+  const pendingRemoteRef = useRef(null);
+  // 구독 콜백이 최신 편집 내용을 읽되 재구독을 유발하지 않도록 ref로 보관
+  const nameRef = useRef(name);
+  nameRef.current = name;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   const loadInto = (cl) => {
+    const its = cl.items?.length ? cl.items : [blankItem()];
     setActiveId(cl.id);
-    setName(cl.checklistName);
-    setItems(cl.items?.length ? cl.items : [blankItem()]);
+    setName(cl.checklistName ?? "");
+    setItems(its);
+    loadedRef.current = serialize(cl.checklistName ?? "", its);
+    setRemoteChanged(false);
+    pendingRemoteRef.current = null;
     setSavedAt(null);
+  };
+
+  // 사이드바 목록 실시간 구독
+  useEffect(() => {
+    if (!ws) return undefined;
+    setLoading(true);
+    const unsub = subscribeChecklists(
+      ws,
+      (list) => {
+        setLists(list);
+        setLoading(false);
+      },
+      (err) => {
+        console.error(err);
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws?.type, ws?.id]);
+
+  // 작업실이 바뀌면 선택 초기화
+  useEffect(() => {
+    setActiveId(null);
+    setName("");
+    setItems([blankItem()]);
+    loadedRef.current = "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws?.type, ws?.id]);
+
+  // 아무것도 선택 안 했을 때 첫 체크리스트 자동 로드(없으면 빈 폼)
+  useEffect(() => {
+    if (activeId) return;
+    if (lists.length) {
+      loadInto(lists[0]);
+    } else if (!name) {
+      setName("나의 팩트체크 기준");
+      setItems([blankItem()]);
+      loadedRef.current = "";
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lists, activeId]);
+
+  // 활성 체크리스트 문서 실시간 구독 (원격 변경 감지)
+  useEffect(() => {
+    if (!ws || !activeId) return undefined;
+    const unsub = subscribeChecklist(ws, activeId, (cl) => {
+      if (!cl) return; // 삭제됨 — 목록 구독이 처리
+      setRemoteInfo({
+        lastEditedName: cl.lastEditedName ?? null,
+        lastEditedBy: cl.lastEditedBy ?? null,
+        updatedAt: cl.updatedAt ?? null,
+      });
+      const remoteItems = cl.items?.length ? cl.items : [blankItem()];
+      const remoteSer = serialize(cl.checklistName ?? "", remoteItems);
+      if (remoteSer === loadedRef.current) return; // 변화 없음(내 저장 포함)
+      const dirty = serialize(nameRef.current, itemsRef.current) !== loadedRef.current;
+      if (dirty) {
+        // 내 미저장 편집 보호 — 자동 덮어쓰기 금지, 배너로 안내
+        pendingRemoteRef.current = cl;
+        setRemoteChanged(true);
+      } else {
+        loadInto(cl);
+      }
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws?.type, ws?.id, activeId]);
+
+  const applyRemote = () => {
+    if (pendingRemoteRef.current) loadInto(pendingRemoteRef.current);
+    setRemoteChanged(false);
   };
 
   const handleNew = () => {
     setActiveId(null);
     setName("새 체크리스트");
     setItems([blankItem()]);
+    loadedRef.current = "";
+    setRemoteChanged(false);
   };
 
   const updateItem = (idx, patch) =>
@@ -108,15 +180,21 @@ export default function ChecklistEditor() {
     try {
       const mapped = await ensureItemMappings(items);
       setItems(mapped);
+      const payload = {
+        checklistName: name,
+        items: mapped,
+        lastEditedBy: user.uid,
+        lastEditedName: user.displayName ?? null,
+      };
       if (activeId) {
-        await updateChecklist(user.uid, activeId, { checklistName: name, items: mapped });
-        setSavedAt(new Date());
-        await refresh(activeId);
+        await updateChecklist(ws, activeId, payload);
       } else {
-        const newId = await createChecklist(user.uid, { checklistName: name, items: mapped });
-        setSavedAt(new Date());
-        await refresh(newId);
+        const newId = await createChecklist(ws, payload);
+        setActiveId(newId);
       }
+      loadedRef.current = serialize(name, mapped);
+      setRemoteChanged(false);
+      setSavedAt(new Date());
     } catch (e) {
       console.error(e);
       alert(`저장 중 오류: ${e.message}`);
@@ -128,15 +206,21 @@ export default function ChecklistEditor() {
   const handleDelete = async () => {
     if (!activeId) return;
     if (!confirm("이 체크리스트를 삭제하시겠습니까?")) return;
-    await deleteChecklist(user.uid, activeId);
+    await deleteChecklist(ws, activeId);
     setActiveId(null);
-    await refresh();
+    setName("");
+    setItems([blankItem()]);
+    loadedRef.current = "";
   };
 
   return (
     <Layout
       title="체크리스트 작성"
-      subtitle="미디어를 평가할 때 쓸 질문과 1~5점 기준을 직접 만들어요"
+      subtitle={
+        isGroup
+          ? `모둠 작업실 · ${ws?.name ?? "우리 모둠"} — 모둠원과 함께 실시간으로 편집해요`
+          : "미디어를 평가할 때 쓸 질문과 1~5점 기준을 직접 만들어요"
+      }
       actions={
         <>
           <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>
@@ -145,9 +229,20 @@ export default function ChecklistEditor() {
         </>
       }
     >
+      {remoteChanged && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="text-sm text-amber-800">
+            다른 모둠원이 이 체크리스트를 방금 수정했어요
+            {remoteInfo?.lastEditedName ? ` (${remoteInfo.lastEditedName})` : ""}.
+            내 미저장 편집을 보호하기 위해 자동 반영하지 않았어요.
+          </p>
+          <Button variant="secondary" onClick={applyRemote}>최신 내용 불러오기</Button>
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
         <aside className="card h-fit">
-          <p className="label">내 체크리스트</p>
+          <p className="label">{isGroup ? "모둠 체크리스트" : "내 체크리스트"}</p>
           {loading ? (
             <SkeletonList count={2} />
           ) : lists.length === 0 ? (
@@ -181,6 +276,9 @@ export default function ChecklistEditor() {
             <label className="label" htmlFor="cl-name">체크리스트 이름</label>
             <input id="cl-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
             {savedAt && <p className="mt-2 text-xs text-emerald-600">저장됨 · {savedAt.toLocaleTimeString()}</p>}
+            {isGroup && remoteInfo?.lastEditedName && (
+              <p className="mt-1 text-[11px] text-slate-400">마지막 편집: {remoteInfo.lastEditedName}</p>
+            )}
           </div>
 
           <div className="space-y-4">
