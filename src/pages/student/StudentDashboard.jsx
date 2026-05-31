@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
@@ -10,6 +10,7 @@ import {
   listChecklists,
   listFactCheckHistory,
   listFeedbackCards,
+  listTrainingData,
   subscribeAlgorithmModel,
   subscribeChecklists,
   subscribeFeedbackCards,
@@ -26,6 +27,9 @@ import Mascot from "../../components/Mascot.jsx";
 import {
   DIMENSIONS,
   DIMENSION_INFO,
+  computeMastery,
+  generateFeedbackCards,
+  initialWeights,
   masteryToArray,
   weightsToArray,
 } from "../../utils/hpfm.js";
@@ -94,10 +98,13 @@ export default function StudentDashboard() {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
+  const [checklists, setChecklists] = useState([]);
   const [checklistCount, setChecklistCount] = useState(0);
   const [historyCount, setHistoryCount] = useState(0);
   const [model, setModel] = useState(null);
   const [cards, setCards] = useState([]);
+  const [trainings, setTrainings] = useState([]);
+  const [selectedChecklistId, setSelectedChecklistId] = useState("all");
 
   const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
@@ -109,7 +116,10 @@ export default function StudentDashboard() {
     if (!ws) return undefined;
     setLoading(true);
     setModel(null);
+    setTrainings([]);
+    setSelectedChecklistId("all");
     const unsubCl = subscribeChecklists(ws, (list) => {
+      setChecklists(list);
       setChecklistCount(list.length);
       setLoading(false);
     });
@@ -118,6 +128,9 @@ export default function StudentDashboard() {
     listFactCheckHistory(ws)
       .then((h) => setHistoryCount(h.length))
       .catch(() => setHistoryCount(0));
+    listTrainingData(ws)
+      .then((t) => setTrainings(t))
+      .catch(() => setTrainings([]));
     return () => {
       unsubCl();
       unsubModel();
@@ -145,6 +158,68 @@ export default function StudentDashboard() {
   const greetingName = profile?.displayName ?? "학생";
   const convergencePct =
     model?.convergenceScore != null ? `${(model.convergenceScore * 100).toFixed(0)}%` : "-";
+
+  // 체크리스트 필터에 따라 training_data를 부분 집합으로 잘라 마스터리·평가 습관을 재계산한다.
+  // model.mastery / feedback_cards 자체는 워크스페이스 전역 누적치라 "전체" 필터일 때와 같다.
+  const filteredTrainings = useMemo(
+    () =>
+      selectedChecklistId === "all"
+        ? trainings
+        : trainings.filter((t) => t.checklistId === selectedChecklistId),
+    [trainings, selectedChecklistId]
+  );
+
+  const filteredGapHistory = useMemo(
+    () =>
+      filteredTrainings
+        .map((t) => t.gap)
+        .filter((g) => g && Object.keys(g).length > 0),
+    [filteredTrainings]
+  );
+
+  const weightsForMastery = model?.weights && Object.keys(model.weights).length
+    ? model.weights
+    : initialWeights();
+
+  const localMastery = useMemo(
+    () => computeMastery(weightsForMastery, filteredGapHistory),
+    [weightsForMastery, filteredGapHistory]
+  );
+
+  const localCards = useMemo(
+    () => generateFeedbackCards(filteredGapHistory),
+    [filteredGapHistory]
+  );
+
+  // 선택된 체크리스트(들)의 항목 dimension 분포로 누락 검증 행동을 식별.
+  // 누락이면 그 행동에 대해 학생 체크리스트가 없어 AI 평가가 지배적이라는 안내가 필요.
+  const coverage = useMemo(() => {
+    const targetLists =
+      selectedChecklistId === "all"
+        ? checklists
+        : checklists.filter((c) => c.id === selectedChecklistId);
+    const covered = new Set();
+    let totalItems = 0;
+    for (const cl of targetLists) {
+      for (const item of cl.items ?? []) {
+        totalItems += 1;
+        if (DIMENSIONS.includes(item.dimension)) covered.add(item.dimension);
+      }
+    }
+    const missing = DIMENSIONS.filter((d) => !covered.has(d));
+    return {
+      covered: [...covered],
+      missing,
+      totalItems,
+      hasAnyList: targetLists.length > 0,
+    };
+  }, [checklists, selectedChecklistId]);
+
+  const selectedChecklistLabel =
+    selectedChecklistId === "all"
+      ? "전체 체크리스트 누적"
+      : checklists.find((c) => c.id === selectedChecklistId)?.checklistName ??
+        "(삭제된 체크리스트)";
 
   const isLeader = group?.leaderUid === user?.uid;
   const shareUrl =
@@ -324,32 +399,80 @@ export default function StudentDashboard() {
             </section>
           )}
 
-          {model?.mastery && (
-            <section className="mb-10 rounded-3xl border border-slate-100 bg-white p-7 shadow-glow">
-              <div className="mb-4">
-                <h3 className="font-display text-xl font-bold tracking-tight text-ink">검증 행동 마스터리</h3>
-                <p className="mt-1 text-xs text-ink-muted">
-                  각 검증 행동을 얼마나 안정적으로 수행하는지 보여줘요. 격차가 작고 σ가 줄어들수록 마스터리가 올라가요.
+          {checklists.length > 1 && (
+            <section className="mb-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-glow">
+              <div className="flex flex-wrap items-center gap-3">
+                <label htmlFor="dashboard-cl" className="text-xs font-bold uppercase tracking-wider text-ink-muted">
+                  분석 기준 체크리스트
+                </label>
+                <select
+                  id="dashboard-cl"
+                  className="input max-w-xs"
+                  value={selectedChecklistId}
+                  onChange={(e) => setSelectedChecklistId(e.target.value)}
+                >
+                  <option value="all">전체 (모든 체크리스트 누적)</option>
+                  {checklists.map((cl) => (
+                    <option key={cl.id} value={cl.id}>{cl.checklistName}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-ink-muted">
+                  ※ 이 선택은 아래 <strong>검증 행동 마스터리</strong>와 <strong>평가 습관 분석</strong>에 동시에 적용돼요.
                 </p>
               </div>
+            </section>
+          )}
+
+          {model?.mastery && (
+            <section className="mb-10 rounded-3xl border border-slate-100 bg-white p-7 shadow-glow">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h3 className="font-display text-xl font-bold tracking-tight text-ink">검증 행동 마스터리</h3>
+                  <p className="mt-1 text-xs text-ink-muted">
+                    각 검증 행동을 얼마나 안정적으로 수행하는지 보여줘요. 격차가 작고 σ가 줄어들수록 마스터리가 올라가요.
+                  </p>
+                </div>
+                {checklists.length > 1 && (
+                  <span className="badge bg-brand-50 text-brand-700">
+                    {selectedChecklistLabel} · 평가 {filteredGapHistory.length}건
+                  </span>
+                )}
+              </div>
+
+              {coverage.missing.length > 0 && coverage.hasAnyList && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                  ⚠️ 이 체크리스트엔 다음 검증 행동을 평가할 항목이 없어요 —{" "}
+                  <strong>
+                    {coverage.missing.map((d) => `${d} ${DIMENSION_INFO[d].name}`).join(", ")}
+                  </strong>
+                  . 해당 검증 행동에는 학생이 만든 기준이 없어 <strong>AI 평가가 지배적으로 적용</strong>돼요. 마스터리·평가 습관 카드도 이 영역에선 신뢰도가 떨어질 수 있어요.
+                </div>
+              )}
+
               <div className="grid gap-2.5 md:grid-cols-2">
-                {masteryToArray(model.mastery).map((m) => {
+                {masteryToArray(localMastery).map((m) => {
                   const pct = Math.max(0, Math.min(100, m.value * 100));
                   const tone = pct >= 70 ? "emerald" : pct >= 40 ? "amber" : "rose";
                   const barColor = tone === "emerald" ? "from-emerald-400 to-emerald-600" : tone === "amber" ? "from-amber-400 to-amber-600" : "from-rose-400 to-rose-600";
                   const textColor = tone === "emerald" ? "text-emerald-700" : tone === "amber" ? "text-amber-700" : "text-rose-700";
+                  const dimMissing = coverage.missing.includes(m.code);
                   return (
                     <div key={m.code} className="flex items-center gap-3">
                       <span className="w-40 truncate text-xs text-ink-variant">
                         <span className={`font-bold ${textColor}`}>{m.code}</span> {m.name}
+                        {dimMissing && (
+                          <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-800" title="이 검증 행동에 대한 체크리스트 항목이 없어 AI 평가가 지배적이에요">
+                            AI 지배
+                          </span>
+                        )}
                       </span>
                       <div className="flex-1">
                         <div className="h-2 w-full overflow-hidden rounded-full bg-surface-base">
-                          <div className={`h-2 rounded-full bg-gradient-to-r ${barColor} transition-all duration-500`} style={{ width: `${pct}%` }} />
+                          <div className={`h-2 rounded-full bg-gradient-to-r ${barColor} transition-all duration-500 ${dimMissing ? "opacity-40" : ""}`} style={{ width: `${pct}%` }} />
                         </div>
                       </div>
-                      <span className={`w-16 text-right text-xs font-bold ${textColor}`}>
-                        {pct.toFixed(0)}%{pct < 40 && " ⚠️"}{pct >= 80 && " 🌟"}
+                      <span className={`w-16 text-right text-xs font-bold ${textColor} ${dimMissing ? "opacity-50" : ""}`}>
+                        {pct.toFixed(0)}%{pct < 40 && !dimMissing && " ⚠️"}{pct >= 80 && !dimMissing && " 🌟"}
                       </span>
                     </div>
                   );
@@ -366,21 +489,38 @@ export default function StudentDashboard() {
                 </h3>
                 <p className="mt-1 text-xs text-ink-muted">지금까지 평가한 결과에서 발견한 평가 버릇이야. 자기 점검에 활용해봐.</p>
               </div>
-              <span className="badge bg-emerald-50 text-emerald-700">
-                안정 {DIMENSIONS.length - cards.length} / {DIMENSIONS.length}개 검증 행동
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                {checklists.length > 1 && (
+                  <span className="badge bg-brand-50 text-brand-700">
+                    {selectedChecklistLabel} · 평가 {filteredGapHistory.length}건
+                  </span>
+                )}
+                <span className="badge bg-emerald-50 text-emerald-700">
+                  안정 {DIMENSIONS.length - localCards.length} / {DIMENSIONS.length}개 검증 행동
+                </span>
+              </div>
             </div>
 
-            <PrincipleProgress cards={cards} />
+            {coverage.missing.length > 0 && coverage.hasAnyList && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                ⚠️ 이 체크리스트엔 다음 검증 행동을 평가할 항목이 없어요 —{" "}
+                <strong>
+                  {coverage.missing.map((d) => `${d} ${DIMENSION_INFO[d].name}`).join(", ")}
+                </strong>
+                . 학생 기준이 없는 영역이라 <strong>AI 평가가 지배적으로 적용</strong>되고, 이 영역의 평가 습관 카드는 만들어지지 않아요.
+              </div>
+            )}
 
-            {cards.length === 0 ? (
+            <PrincipleProgress cards={localCards} missing={coverage.missing} />
+
+            {localCards.length === 0 ? (
               <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-surface-low p-6 text-center">
                 <p className="text-sm font-semibold text-ink">5대 검증 행동 모두에서 안정적으로 평가하고 있어요! 🎉</p>
                 <p className="mt-1 text-xs text-ink-muted">미디어를 더 평가할수록 평가 습관이 더 자세히 분석돼요.</p>
               </div>
             ) : (
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {cards.map((c) => {
+                {localCards.map((c) => {
                   const info = DIMENSION_INFO[c.dimension];
                   const meta = TYPE_META[c.type] ?? TYPE_META.inconsistent;
                   const tone = TYPE_TONES[meta.tone];
@@ -579,22 +719,46 @@ function StatCard({ label, value, unit, tone = "brand", icon, tag, tagTone = "sl
   );
 }
 
-function PrincipleProgress({ cards }) {
+function PrincipleProgress({ cards, missing = [] }) {
   const flagged = new Set((cards ?? []).map((c) => c.dimension));
+  const missingSet = new Set(missing);
   return (
     <div className="grid gap-2 rounded-2xl bg-surface-low p-3 sm:grid-cols-5">
       {DIMENSIONS.map((d) => {
         const info = DIMENSION_INFO[d];
+        const isMissing = missingSet.has(d);
         const stable = !flagged.has(d);
+        const wrapClass = isMissing
+          ? "bg-amber-50 ring-amber-200"
+          : stable
+          ? "bg-emerald-50 ring-emerald-100"
+          : "bg-white ring-slate-200";
+        const iconColor = isMissing
+          ? "text-amber-600"
+          : stable
+          ? "text-emerald-600"
+          : "text-slate-400";
+        const icon = isMissing ? "warning" : stable ? "check_circle" : "radio_button_unchecked";
+        const label = isMissing ? "체크리스트 없음" : stable ? "안정" : "조금 더!";
         return (
-          <div key={d} className={`rounded-xl px-3 py-2 ring-1 ${stable ? "bg-emerald-50 ring-emerald-100" : "bg-white ring-slate-200"}`} title={info.description}>
+          <div
+            key={d}
+            className={`rounded-xl px-3 py-2 ring-1 ${wrapClass}`}
+            title={
+              isMissing
+                ? `${info.description}\n\n이 체크리스트엔 해당 항목이 없어 AI 평가가 지배적이에요.`
+                : info.description
+            }
+          >
             <p className="flex items-center gap-1 text-[11px] font-bold text-ink">
-              <span className={`material-symbols-outlined ${stable ? "text-emerald-600" : "text-slate-400"}`} style={{ fontSize: 14 }}>
-                {stable ? "check_circle" : "radio_button_unchecked"}
+              <span className={`material-symbols-outlined ${iconColor}`} style={{ fontSize: 14 }}>
+                {icon}
               </span>
               {info.name}
             </p>
-            <p className="mt-0.5 text-[10px] text-ink-muted">{stable ? "안정" : "조금 더!"}</p>
+            <p className={`mt-0.5 text-[10px] ${isMissing ? "text-amber-700" : "text-ink-muted"}`}>
+              {label}
+            </p>
           </div>
         );
       })}
