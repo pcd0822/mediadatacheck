@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
@@ -35,8 +35,8 @@ function hashStr(s) {
   for (let i = 0; i < s.length; i += 1) h = (((h << 5) + h) + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
 }
-function factcheckRunKey(form, imageUrl) {
-  const norm = [form.title, form.content, form.link, imageUrl]
+function factcheckRunKey(form, imageUrl, checklistId) {
+  const norm = [form.title, form.content, form.link, imageUrl, checklistId]
     .map((x) => (x ?? "").trim())
     .join("");
   return `fc_${hashStr(norm)}`;
@@ -62,6 +62,7 @@ export default function FactCheckPage() {
   const [teacherImageUrl, setTeacherImageUrl] = useState("");
   const [history, setHistory] = useState([]);
   const [teacherMedia, setTeacherMedia] = useState([]);
+  const [showLoadModal, setShowLoadModal] = useState(false);
 
   // 체크리스트/모델/교사 미디어 로드 (교사 미디어는 세션 캐시)
   useEffect(() => {
@@ -154,6 +155,48 @@ export default function FactCheckPage() {
     setImageFile(null);
     setImagePreview("");
     setTeacherImageUrl("");
+  };
+
+  // 현재 활성 체크리스트로 검증된 카드만 노출 — 체크리스트 버전별로 결과 카드를 분리한다.
+  const visibleHistory = useMemo(
+    () => history.filter((h) => h.checklistId === activeChecklistId),
+    [history, activeChecklistId]
+  );
+
+  // 모달 후보: 활성 체크리스트가 아닌 다른 체크리스트로 검증된 미디어(중복 제거).
+  // 사용자가 새 체크리스트로 재검증할 수 있도록 미디어 원본 정보를 폼에 채워 넣는다.
+  const loadableHistory = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const h of history) {
+      if (h.checklistId === activeChecklistId) continue;
+      const m = h.media ?? {};
+      const key = [m.title, m.content, m.link, m.imageUrl]
+        .map((x) => (x ?? "").trim())
+        .join("|");
+      if (!key.replaceAll("|", "")) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(h);
+    }
+    return out;
+  }, [history, activeChecklistId]);
+
+  const loadFromHistory = (item) => {
+    const m = item.media ?? {};
+    setForm({
+      title: m.title ?? "",
+      content: m.content ?? "",
+      link: m.link ?? "",
+    });
+    setImageFile(null);
+    setImagePreview(m.imageUrl ?? "");
+    setTeacherImageUrl(m.imageUrl ?? "");
+    setError("");
+    setShowLoadModal(false);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   };
 
   const fillFromTeacher = (m) => {
@@ -249,7 +292,7 @@ export default function FactCheckPage() {
 
       if (isGroup) {
         // single-flight: 같은 미디어는 모둠 전체에서 1회만 Gemini 호출
-        const runKey = factcheckRunKey(form, imageUrl);
+        const runKey = factcheckRunKey(form, imageUrl, activeChecklistId);
         const decision = await claimFactCheckRun(ws, runKey, {
           uid: user.uid,
           name: user.displayName ?? null,
@@ -318,8 +361,23 @@ export default function FactCheckPage() {
     >
       <div className="card grid gap-5">
         <div>
-          <label className="label">사용 체크리스트</label>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className="label mb-0" htmlFor="fc-checklist">사용 체크리스트</label>
+            <Button
+              variant="ghost"
+              onClick={() => setShowLoadModal(true)}
+              disabled={loadableHistory.length === 0}
+              title={
+                loadableHistory.length === 0
+                  ? "다른 체크리스트로 검증된 미디어가 아직 없어요"
+                  : "다른 체크리스트로 검증했던 미디어를 가져와 이 체크리스트로 다시 평가해요"
+              }
+            >
+              + 기존 자료 불러오기
+            </Button>
+          </div>
           <select
+            id="fc-checklist"
             className="input"
             value={activeChecklistId ?? ""}
             onChange={(e) => setActiveChecklistId(e.target.value)}
@@ -431,22 +489,24 @@ export default function FactCheckPage() {
             </h2>
             <p className="text-xs text-slate-500">
               {isGroup
-                ? "모둠원이 실행한 팩트체크가 모두 모여요. 카드를 클릭하면 결과 화면으로 이동합니다."
-                : "지금까지 팩트체크한 자료들이에요. 카드를 클릭하면 결과 화면으로 이동합니다."}
+                ? "지금 선택한 체크리스트로 검증한 결과만 보여줘요. 체크리스트를 바꾸면 그 버전의 결과가 표시돼요."
+                : "지금 선택한 체크리스트로 검증한 결과만 보여줘요. 체크리스트를 바꾸면 그 버전의 결과가 표시돼요."}
             </p>
           </div>
-          {history.length > 0 && (
-            <span className="badge bg-slate-100 text-slate-600">총 {history.length}건</span>
+          {visibleHistory.length > 0 && (
+            <span className="badge bg-slate-100 text-slate-600">총 {visibleHistory.length}건</span>
           )}
         </div>
 
-        {history.length === 0 ? (
+        {visibleHistory.length === 0 ? (
           <div className="card text-center text-sm text-slate-500">
-            아직 등록한 미디어가 없습니다. 위 양식에서 첫 팩트체크를 시작해보세요.
+            {history.length === 0
+              ? "아직 등록한 미디어가 없습니다. 위 양식에서 첫 팩트체크를 시작해보세요."
+              : "이 체크리스트로 검증한 자료가 아직 없어요. 다른 체크리스트로 검증했던 자료를 가져오려면 위 '+ 기존 자료 불러오기'를 눌러보세요."}
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {history.map((h) => (
+            {visibleHistory.map((h) => (
               <HistoryCard
                 key={h.id}
                 item={h}
@@ -462,6 +522,14 @@ export default function FactCheckPage() {
       {waiting && (
         <LoadingOverlay
           message={`${waiting.by ?? "모둠원"}이(가) 같은 미디어를 팩트체크하고 있어요. 결과를 함께 받는 중...`}
+        />
+      )}
+
+      {showLoadModal && (
+        <LoadHistoryModal
+          items={loadableHistory}
+          onPick={loadFromHistory}
+          onClose={() => setShowLoadModal(false)}
         />
       )}
     </Layout>
@@ -562,5 +630,73 @@ function HistoryCard({ item, onClick, showAuthor }) {
         </div>
       </div>
     </button>
+  );
+}
+
+function LoadHistoryModal({ items, onPick, onClose }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-display text-lg font-bold text-slate-900">기존 자료 불러오기</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              다른 체크리스트로 검증했던 미디어예요. 불러오면 제목·원본 링크·첨부 이미지·본문이 폼에 채워지고, 지금 선택한 체크리스트로 다시 팩트체크할 수 있어요.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            aria-label="닫기"
+          >
+            ✕
+          </button>
+        </div>
+
+        {items.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+            다른 체크리스트로 검증한 자료가 아직 없어요.
+          </div>
+        ) : (
+          <div className="max-h-[60vh] overflow-y-auto rounded-xl ring-1 ring-slate-200">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-slate-50 text-xs text-slate-500">
+                <tr>
+                  <th className="w-12 px-3 py-2 text-left font-semibold">연번</th>
+                  <th className="px-3 py-2 text-left font-semibold">미디어 제목</th>
+                  <th className="w-28 px-3 py-2 text-right font-semibold">불러오기</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {items.map((it, idx) => (
+                  <tr key={it.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 text-slate-500">{idx + 1}</td>
+                    <td className="px-3 py-2 text-slate-800">
+                      <p className="line-clamp-2 font-medium">
+                        {it.media?.title || "(제목 없음)"}
+                      </p>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Button variant="secondary" onClick={() => onPick(it)}>불러오기</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end">
+          <Button variant="ghost" onClick={onClose}>닫기</Button>
+        </div>
+      </div>
+    </div>
   );
 }
