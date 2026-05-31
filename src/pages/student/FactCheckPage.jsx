@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../../components/Button.jsx";
 import Layout from "../../components/Layout.jsx";
 import LoadingOverlay from "../../components/Loading/LoadingOverlay.jsx";
@@ -46,6 +46,8 @@ export default function FactCheckPage() {
   const { user } = useAuth();
   const { activeWorkspace: ws, isGroup } = useWorkspace();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedChecklistId = searchParams.get("checklist");
   const [checklists, setChecklists] = useState([]);
   const [activeChecklistId, setActiveChecklistId] = useState(null);
   const [model, setModel] = useState(null);
@@ -74,11 +76,22 @@ export default function FactCheckPage() {
       setChecklists(cls);
       setModel(m);
       setTeacherMedia(tm);
+      const fromUrl =
+        requestedChecklistId && cls.find((c) => c.id === requestedChecklistId)
+          ? requestedChecklistId
+          : null;
       const initial =
-        m?.checklistId && cls.find((c) => c.id === m.checklistId)
+        fromUrl ??
+        (m?.checklistId && cls.find((c) => c.id === m.checklistId)
           ? m.checklistId
-          : cls[0]?.id ?? null;
+          : cls[0]?.id ?? null);
       setActiveChecklistId(initial);
+      if (fromUrl) {
+        // 한 번 반영했으면 URL은 정리 — 사이드바·체크리스트 변경에 다시 끌려가지 않도록.
+        const next = new URLSearchParams(searchParams);
+        next.delete("checklist");
+        setSearchParams(next, { replace: true });
+      }
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

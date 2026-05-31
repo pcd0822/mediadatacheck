@@ -44,6 +44,7 @@ export default function ChecklistEditor() {
   const [savedAt, setSavedAt] = useState(null);
   const [remoteInfo, setRemoteInfo] = useState(null);
   const [remoteChanged, setRemoteChanged] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const ws = activeWorkspace;
   const loadedRef = useRef("");
@@ -137,12 +138,38 @@ export default function ChecklistEditor() {
     setRemoteChanged(false);
   };
 
-  const handleNew = () => {
-    setActiveId(null);
-    setName("새 체크리스트");
-    setItems([blankItem()]);
-    loadedRef.current = "";
-    setRemoteChanged(false);
+  const handleNew = async () => {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const baseName = "새 체크리스트";
+      const existingNames = new Set(lists.map((l) => l.checklistName));
+      let candidateName = baseName;
+      let counter = 2;
+      while (existingNames.has(candidateName)) {
+        candidateName = `${baseName} ${counter}`;
+        counter += 1;
+      }
+      const initialItems = [blankItem()];
+      const newId = await createChecklist(ws, {
+        checklistName: candidateName,
+        items: initialItems,
+        lastEditedBy: user.uid,
+        lastEditedName: user.displayName ?? null,
+      });
+      setActiveId(newId);
+      setName(candidateName);
+      setItems(initialItems);
+      loadedRef.current = serialize(candidateName, initialItems);
+      pendingRemoteRef.current = null;
+      setRemoteChanged(false);
+      setSavedAt(null);
+    } catch (e) {
+      console.error(e);
+      alert(`새 체크리스트 생성 중 오류: ${e.message}`);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const updateItem = (idx, patch) =>
@@ -224,8 +251,18 @@ export default function ChecklistEditor() {
       actions={
         <>
           <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>
-          <Button variant="ghost" onClick={handleNew}>+ 새 체크리스트</Button>
-          <Button variant="primary" onClick={handleSave} loading={saving}>저장</Button>
+          <Button variant="ghost" onClick={handleNew} loading={creating} disabled={creating || saving}>
+            + 새 체크리스트
+          </Button>
+          <Button variant="primary" onClick={handleSave} loading={saving} disabled={saving || creating}>저장</Button>
+          {activeId && !remoteChanged && (
+            <Button
+              variant="secondary"
+              onClick={() => navigate(`/student/factcheck?checklist=${activeId}`)}
+            >
+              이 체크리스트로 팩트체크 →
+            </Button>
+          )}
         </>
       }
     >
