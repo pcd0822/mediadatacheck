@@ -7,6 +7,7 @@ import { useAuth } from "../../contexts/AuthContext.jsx";
 import { useWorkspace } from "../../contexts/WorkspaceContext.jsx";
 import {
   appendTrainingData,
+  deleteFactCheckHistory,
   getAlgorithmModel,
   getFactCheckHistory,
   listTrainingData,
@@ -42,6 +43,7 @@ export default function ResultPage() {
   const [mode, setMode] = useState("view"); // view | refine
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [savedNote, setSavedNote] = useState("");
   const [model, setModel] = useState(null);
 
@@ -192,6 +194,23 @@ export default function ResultPage() {
     }
   };
 
+  const handleDelete = async () => {
+    if (deleting) return;
+    const ok = window.confirm(
+      "이 팩트체크 결과를 삭제할까요?\n\n자료와 점수가 사라지고, 이번 결과로 반영된 학습 데이터도 함께 정리돼요.\n(이미 가중치에 누적된 학습은 되돌릴 수 없어요.)"
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await deleteFactCheckHistory(ws, historyId);
+      navigate("/student/factcheck", { replace: true });
+    } catch (e) {
+      console.error(e);
+      alert(`삭제 중 오류: ${e.message}`);
+      setDeleting(false);
+    }
+  };
+
   const handleRefineSave = async () => {
     setActing(true);
     try {
@@ -254,6 +273,14 @@ export default function ResultPage() {
           </Button>
           <Button variant="primary" onClick={() => navigate("/student/factcheck")}>
             다른 자료 팩트체크하기 →
+          </Button>
+          <Button
+            variant="danger"
+            onClick={handleDelete}
+            loading={deleting}
+            disabled={deleting || acting}
+          >
+            이 자료 삭제
           </Button>
         </>
       }

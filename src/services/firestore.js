@@ -303,6 +303,18 @@ export async function updateFactCheckHistory(ws, historyId, patch) {
   });
 }
 
+/**
+ * 팩트체크 결과 1건과 결정적 ID로 묶인 학습 데이터를 함께 정리한다.
+ * 모델 가중치(Bayesian 누적)는 되돌리지 않는다 — 정확한 롤백 불가. 마스터리·피드백 카드는
+ * 다음 수용/정교화 시 listTrainingData 기반으로 자동 재계산된다.
+ */
+export async function deleteFactCheckHistory(ws, historyId) {
+  await deleteDoc(wsDoc(ws, "factcheck_history", historyId));
+  await deleteDoc(
+    wsDoc(ws, "algorithm_model", "current", "training_data", `factcheck_${historyId}`)
+  ).catch(() => {});
+}
+
 export async function listFactCheckHistory(ws) {
   const q = query(
     wsCol(ws, "factcheck_history"),
