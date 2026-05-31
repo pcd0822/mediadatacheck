@@ -60,6 +60,7 @@ export default function FactCheckPage() {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
   const [teacherImageUrl, setTeacherImageUrl] = useState("");
+  const [imageSource, setImageSource] = useState(null); // "teacher" | "history" | null
   const [history, setHistory] = useState([]);
   const [teacherMedia, setTeacherMedia] = useState([]);
   const [showLoadModal, setShowLoadModal] = useState(false);
@@ -148,6 +149,7 @@ export default function FactCheckPage() {
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
     setTeacherImageUrl("");
+    setImageSource(null);
     setError("");
   };
 
@@ -155,7 +157,21 @@ export default function FactCheckPage() {
     setImageFile(null);
     setImagePreview("");
     setTeacherImageUrl("");
+    setImageSource(null);
   };
+
+  const handleResetForm = () => {
+    setForm({ title: "", content: "", link: "" });
+    setImageFile(null);
+    setImagePreview("");
+    setTeacherImageUrl("");
+    setImageSource(null);
+    setError("");
+  };
+
+  const hasFormData = !!(
+    form.title || form.content || form.link || imagePreview || imageFile
+  );
 
   // 현재 활성 체크리스트로 검증된 카드만 노출 — 체크리스트 버전별로 결과 카드를 분리한다.
   const visibleHistory = useMemo(
@@ -192,6 +208,7 @@ export default function FactCheckPage() {
     setImageFile(null);
     setImagePreview(m.imageUrl ?? "");
     setTeacherImageUrl(m.imageUrl ?? "");
+    setImageSource(m.imageUrl ? "history" : null);
     setError("");
     setShowLoadModal(false);
     if (typeof window !== "undefined") {
@@ -208,6 +225,7 @@ export default function FactCheckPage() {
     if (!imageFile) {
       setTeacherImageUrl(m.thumbnailUrl ?? "");
       setImagePreview(m.thumbnailUrl ?? "");
+      setImageSource(m.thumbnailUrl ? "teacher" : null);
     }
     setError("");
     if (typeof window !== "undefined") {
@@ -363,18 +381,29 @@ export default function FactCheckPage() {
         <div>
           <div className="mb-1 flex items-center justify-between gap-2">
             <label className="label mb-0" htmlFor="fc-checklist">사용 체크리스트</label>
-            <Button
-              variant="ghost"
-              onClick={() => setShowLoadModal(true)}
-              disabled={loadableHistory.length === 0}
-              title={
-                loadableHistory.length === 0
-                  ? "다른 체크리스트로 검증된 미디어가 아직 없어요"
-                  : "다른 체크리스트로 검증했던 미디어를 가져와 이 체크리스트로 다시 평가해요"
-              }
-            >
-              + 기존 자료 불러오기
-            </Button>
+            <div className="flex items-center gap-1">
+              {hasFormData && (
+                <Button
+                  variant="ghost"
+                  onClick={handleResetForm}
+                  title="현재 폼에 입력·불러온 미디어 정보를 모두 비웁니다"
+                >
+                  불러온 자료 초기화
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                onClick={() => setShowLoadModal(true)}
+                disabled={loadableHistory.length === 0}
+                title={
+                  loadableHistory.length === 0
+                    ? "다른 체크리스트로 검증된 미디어가 아직 없어요"
+                    : "다른 체크리스트로 검증했던 미디어를 가져와 이 체크리스트로 다시 평가해요"
+                }
+              >
+                + 기존 자료 불러오기
+              </Button>
+            </div>
           </div>
           <select
             id="fc-checklist"
@@ -431,8 +460,10 @@ export default function FactCheckPage() {
                   <p className="text-xs text-slate-500">
                     {imageFile.name} · {(imageFile.size / 1024 / 1024).toFixed(2)}MB
                   </p>
-                ) : teacherImageUrl ? (
+                ) : imageSource === "teacher" ? (
                   <p className="text-xs text-slate-500">선생님 자료의 이미지를 가져왔어요</p>
+                ) : imageSource === "history" ? (
+                  <p className="text-xs text-slate-500">기존 자료에서 가져온 이미지예요</p>
                 ) : null}
                 <Button type="button" variant="ghost" onClick={handleRemoveImage}>
                   이미지 제거
