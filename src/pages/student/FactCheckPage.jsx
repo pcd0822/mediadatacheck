@@ -35,6 +35,10 @@ function hashStr(s) {
   for (let i = 0; i < s.length; i += 1) h = (((h << 5) + h) + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
 }
+function lastChecklistStorageKey(uid, ws) {
+  return `mdc:fc:lastChecklist:${uid}:${ws.type}:${ws.id}`;
+}
+
 function factcheckRunKey(form, imageUrl, checklistId) {
   const norm = [form.title, form.content, form.link, imageUrl, checklistId]
     .map((x) => (x ?? "").trim())
@@ -82,8 +86,17 @@ export default function FactCheckPage() {
         requestedChecklistId && cls.find((c) => c.id === requestedChecklistId)
           ? requestedChecklistId
           : null;
+      // 학번(uid) × 작업실 단위로 마지막 선택을 격리해 저장한다.
+      let storedId = null;
+      try {
+        const raw = localStorage.getItem(lastChecklistStorageKey(user.uid, ws));
+        if (raw && cls.find((c) => c.id === raw)) storedId = raw;
+      } catch {
+        // localStorage 접근 불가(프라이빗 모드 등) — 무시.
+      }
       const initial =
         fromUrl ??
+        storedId ??
         (m?.checklistId && cls.find((c) => c.id === m.checklistId)
           ? m.checklistId
           : cls[0]?.id ?? null);
@@ -98,6 +111,19 @@ export default function FactCheckPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws?.type, ws?.id]);
+
+  // 드롭다운에서 바꾼 선택을 다음 진입 때도 유지하도록 localStorage에 기록.
+  useEffect(() => {
+    if (!activeChecklistId || !ws || !user?.uid) return;
+    try {
+      localStorage.setItem(
+        lastChecklistStorageKey(user.uid, ws),
+        activeChecklistId
+      );
+    } catch {
+      // 무시
+    }
+  }, [activeChecklistId, ws?.type, ws?.id, user?.uid]);
 
   // 팩트체크 기록 실시간(limit 30) — 모둠원 실행 결과를 서로 즉시 확인
   useEffect(() => {
