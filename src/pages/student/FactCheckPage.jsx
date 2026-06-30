@@ -20,6 +20,7 @@ import {
 import { evaluateMediaDimensions } from "../../services/gemini.js";
 import { uploadFactCheckImage } from "../../services/storage.js";
 import { cached } from "../../utils/dataCache.js";
+import { MODEL_VERSION, STANDARD_BASIS } from "../../constants/model.js";
 import {
   DIMENSIONS,
   computeFinalScore,
@@ -315,8 +316,8 @@ export default function FactCheckPage() {
       accepted: false,
       createdByUid: user.uid,
       createdByName: user.displayName ?? null,
-      version: "VAPM-3.0",
-      standard_basis: "5_verification_actions",
+      version: MODEL_VERSION,
+      standard_basis: STANDARD_BASIS,
     });
   };
 

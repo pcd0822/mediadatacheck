@@ -15,9 +15,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "../firebase.js";
-
-const MODEL_VERSION = "VAPM-3.0";
-const STANDARD_BASIS = "5_verification_actions";
+import { MODEL_VERSION, STANDARD_BASIS } from "../constants/model.js";
 
 /** 모둠 인원 상한 — 리스너 fan-out·동시쓰기를 묶어 무료 쿼터를 보호. */
 export const MAX_GROUP_MEMBERS = 8;

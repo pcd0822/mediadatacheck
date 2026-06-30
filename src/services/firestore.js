@@ -15,9 +15,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase.js";
-
-const MODEL_VERSION = "VAPM-3.0";
-const STANDARD_BASIS = "5_verification_actions";
+import { MODEL_VERSION, STANDARD_BASIS } from "../constants/model.js";
 
 /* ====================== 워크스페이스 추상화 ======================
  * 개인(users/{uid})과 모둠(groups/{groupId}) 작업실을 같은 함수로 다루기 위한 디스크립터.

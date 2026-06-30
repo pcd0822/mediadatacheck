@@ -21,8 +21,9 @@
  * 파일명을 hpfm.js로 유지하지만 모델은 VAPM-3.0입니다.
  */
 
-export const MODEL_VERSION = "VAPM-3.0";
-export const STANDARD_BASIS = "5_verification_actions";
+// 모델 버전 상수는 단일 출처(src/constants/model.js)에서 가져와 재노출한다.
+// (예전엔 여기·firestore.js·groups.js에 각각 정의되어 3중 중복이었음)
+export { MODEL_VERSION, STANDARD_BASIS } from "../constants/model.js";
 
 export const DIMENSIONS = ["V1", "V2", "V3", "V4", "V5"];
 
