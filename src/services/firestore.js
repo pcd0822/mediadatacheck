@@ -35,6 +35,37 @@ function wsDoc(ws, ...rest) {
   return doc(db, ...wsSegments(ws), ...rest);
 }
 
+/* ====================== config/teacher (교사 인증 코드 게이트, 프로젝트 단위) ======================
+ * "교사당 Firebase 1개" 모델: 이 프로젝트(=이 Firebase)의 교사 접근 코드를 단일 문서에 보관한다.
+ * - 첫 교사가 setByUid로 생성하고, 이후 교사 추가는 이 코드를 알아야 가능(클라이언트 검증).
+ * - 평문이 아니라 salt+SHA-256 해시만 저장한다(소프트 게이트). 해시 생성은 utils/teacherCode.js.
+ */
+export async function getTeacherAuthConfig() {
+  const snap = await getDoc(doc(db, "config", "teacher"));
+  return snap.exists() ? snap.data() : null;
+}
+
+/** 최초 1회 설정(문서가 없을 때). 규칙상 setByUid는 본인이어야 한다. */
+export async function createTeacherAuthConfig({ uid, email, salt, codeHash }) {
+  await setDoc(doc(db, "config", "teacher"), {
+    salt,
+    codeHash,
+    setByUid: uid,
+    setByEmail: email ?? null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** 로그인한 교사가 코드 변경. 규칙상 isTeacher()만 허용. */
+export async function updateTeacherAuthCode({ salt, codeHash }) {
+  await setDoc(
+    doc(db, "config", "teacher"),
+    { salt, codeHash, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
 /* ====================== media_items (교사가 등록, 전역) ====================== */
 
 export async function createMediaItem(teacherUid, data) {

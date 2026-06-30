@@ -31,6 +31,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/groups/$(groupId)).data.leaderUid == request.auth.uid;
     }
 
+    // ====== config/teacher : 교사 인증 코드 게이트 (프로젝트 단위 단일 문서) ======
+    // "교사당 Firebase 1개" 모델. salt+해시만 저장(평문 아님).
+    match /config/{docId} {
+      allow read: if isSignedIn();                  // 코드 검증 위해 로그인 사용자 읽기
+      // 최초 설정: 문서가 없을 때(=create) 로그인 사용자가 본인 uid로 1회 생성
+      allow create: if isSignedIn()
+                    && request.resource.data.setByUid == request.auth.uid;
+      allow update: if isTeacher();                 // 변경은 인증된 교사만
+      allow delete: if false;
+    }
+
     // ====== users/{uid} : 본인 프로필 ======
     match /users/{uid} {
       allow read: if isSelf(uid);

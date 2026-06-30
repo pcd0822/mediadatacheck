@@ -20,4 +20,6 @@ export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
-export const TEACHER_AUTH_CODE = import.meta.env.VITE_TEACHER_AUTH_CODE ?? "0822";
+// 교사 인증 코드는 더 이상 빌드 타임 상수(VITE_TEACHER_AUTH_CODE)가 아니라,
+// 각 Firebase 프로젝트의 config/teacher 문서에 저장됩니다(첫 교사가 로그인 시 설정).
+// 코드 해싱은 src/utils/teacherCode.js, 저장/조회는 src/services/firestore.js를 참고하세요.

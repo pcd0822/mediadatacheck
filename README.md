@@ -425,6 +425,15 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/groups/$(groupId)).data.leaderUid == request.auth.uid;
     }
 
+    // ====== config/teacher : 교사 인증 코드 게이트(프로젝트 단위 단일 문서) ======
+    match /config/{docId} {
+      allow read: if isSignedIn();                  // 코드 검증 위해 로그인 사용자 읽기
+      allow create: if isSignedIn()                 // 첫 교사가 본인 uid로 1회 생성
+                    && request.resource.data.setByUid == request.auth.uid;
+      allow update: if isTeacher();                 // 변경은 인증된 교사만
+      allow delete: if false;
+    }
+
     // ====== users/{uid} : 본인 프로필 ======
     match /users/{uid} {
       allow read: if isSelf(uid);
@@ -527,15 +536,25 @@ service firebase.storage {
 }
 ```
 
-### 6단계 — 첫 교사 계정 만들기
+### 6단계 — 첫 교사 계정 만들기 (인증 코드 설정)
 
 `role`은 사용자가 **처음 로그인할 때의 선택(학생/교사)** 으로 1회 확정되고 이후 바뀌지 않습니다.
-교사로 시작하려면 로그인 화면에서 교사 경로(`/teacher-code`)로 진입해 인증 코드(기본 `0822`,
-`VITE_TEACHER_AUTH_CODE`로 변경 가능)를 입력한 뒤 Google 로그인하면, 해당 계정의
-`users/{uid}.role`이 `teacher`로 생성됩니다.
+교사 인증 코드는 **빌드에 박힌 고정값이 아니라, 이 Firebase 프로젝트에서 첫 교사가 직접 정하는 값**입니다.
 
-> 이미 학생으로 만들어진 계정을 교사로 바꾸려면 규칙상 클라이언트에서 변경할 수 없으므로,
-> Firebase 콘솔의 Firestore에서 해당 `users/{uid}` 문서의 `role`을 직접 `teacher`로 수정하세요.
+- 로그인 화면 **"교사로 시작"** → Google 로그인.
+- 이 프로젝트에 아직 코드가 없으면(=첫 교사) → **"교사 인증 코드 설정"** 화면이 떠서 원하는
+  코드를 정합니다. 이 코드는 `config/teacher` 문서에 **salt+해시**로 저장되고, 해당 계정은
+  `role: "teacher"`로 생성됩니다.
+- 같은 프로젝트에 **다른 교사**를 추가하려면, 그 교사가 자기 Google 계정으로 "교사로 시작"한 뒤
+  **첫 교사가 정한 코드를 입력**해야 합니다(코드를 모르면 교사가 될 수 없음).
+- 교사는 로그인 후 **교사 대시보드 → "인증 코드 변경"** 에서 현재 코드 확인 후 새 코드로 바꿀 수 있습니다.
+
+> "교사당 Firebase 1개" 모델이라, 각 교사의 데이터는 **서로 다른 Firebase 프로젝트**에 있어 자연히 격리됩니다.
+> 이미 학생으로 굳은 계정을 교사로 바꾸려면 규칙상 클라이언트에서 변경할 수 없으므로,
+> Firebase 콘솔 Firestore에서 해당 `users/{uid}.role`을 직접 `teacher`로 수정하세요.
+>
+> ⚠️ 인증 코드는 학생의 우발적 교사 진입을 막는 **소프트 게이트**입니다(해시로 저장하지만
+> 클라이언트에서 검증). 강한 보안 경계는 인증 코드가 아니라 **Firestore 규칙 + 프로젝트 분리**가 담당합니다.
 
 ### 7단계 — Gemini API 키 발급
 
@@ -611,11 +630,13 @@ VITE_FIREBASE_PROJECT_ID=
 VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
-VITE_TEACHER_AUTH_CODE=0822
 
 GEMINI_API_KEY=          # 서버 전용! VITE_ 붙이지 말 것
 GEMINI_MODEL=gemini-2.5-flash
 ```
+
+> 교사 인증 코드는 더 이상 환경변수가 아닙니다. 첫 교사가 **Google 로그인 후 화면에서 직접
+> 설정**하며, 값은 Firestore `config/teacher`에 salt+해시로 저장됩니다([6단계](#6단계--첫-교사-계정-만들기-인증-코드-설정) 참고).
 
 ### 로컬 실행
 
@@ -648,6 +669,9 @@ netlify dev            # http://localhost:8888  (Gemini Function 포함)
 > **`src/constants/model.js` 단일 출처**에서 채워집니다.
 
 ```
+config/teacher                                              // 교사 인증 코드 게이트(프로젝트 단위)
+  salt, codeHash, setByUid, setByEmail, createdAt, updatedAt // 평문 아님(salt+SHA-256)
+
 users/{uid}
   role, email, displayName, photoURL, createdAt, lastLogin
   groups: { [groupId]: { role, groupName, joinedAt } }      // 소속 모둠
@@ -720,7 +744,7 @@ mediadatacheck/
 ├─ netlify/functions/gemini.js         # Gemini 프록시 (map + evaluate)
 └─ src/
    ├─ main.jsx, App.jsx
-   ├─ firebase.js                      # Firebase 초기화 + TEACHER_AUTH_CODE
+   ├─ firebase.js                      # Firebase 초기화(Auth/Firestore/Storage)
    ├─ constants/
    │   └─ model.js                     # ★ 모델 버전 상수 단일 출처
    ├─ contexts/                        # AuthContext, WorkspaceContext(개인/모둠 전환)
@@ -728,7 +752,8 @@ mediadatacheck/
    ├─ utils/
    │   ├─ hpfm.js                      # VAPM 코어(분류·집계·베이지안·수렴도·마스터리·마이그레이션)
    │   ├─ mappingCache.js              # 검증 행동 매핑 캐시
-   │   └─ dataCache.js                 # 세션 read-through 캐시(무료 쿼터 보호)
+   │   ├─ dataCache.js                 # 세션 read-through 캐시(무료 쿼터 보호)
+   │   └─ teacherCode.js               # 교사 인증 코드 salt+SHA-256 해싱(소프트 게이트)
    ├─ components/                      # Button, Layout, Loading/*
    └─ pages/
        ├─ LoginPage.jsx, TeacherCodePage.jsx
