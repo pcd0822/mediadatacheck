@@ -23,11 +23,9 @@ import { cached } from "../../utils/dataCache.js";
 import { MODEL_VERSION, STANDARD_BASIS } from "../../constants/model.js";
 import {
   DIMENSIONS,
+  applyCorrections,
   computeFinalScore,
-  confidenceInterval95,
-  initialWeights,
-  isColdStart,
-  scoreVariance,
+  countAppliedCorrections,
 } from "../../utils/hpfm.js";
 
 // 같은 입력(미디어)에 대한 모둠 내 중복 Gemini 호출을 막기 위한 결정적 키.
@@ -296,10 +294,13 @@ export default function FactCheckPage() {
       );
     }
 
-    const weights = model?.weights ?? initialWeights();
-    const totalScore = computeFinalScore(weights, dimensionScores);
-    const variance = scoreVariance(weights, dimensionScores);
-    const ci95 = confidenceInterval95(totalScore, variance);
+    // 보정 적용: AI 원점수 → 교사 기준 보정 → 50점 환산·등급·과락.
+    // AI 원점수(dimensionScores)는 보정 전 값 그대로 저장하고, 보정 후 값(correctedDimensionScores)을
+    // 함께 남겨 결과 화면에서 "보정 전 → 후"를 보여준다.
+    const corrections = model?.corrections ?? null;
+    const correctedDimensionScores = applyCorrections(dimensionScores, corrections);
+    const { total, band, dimensionAlert, alertDimensions } =
+      computeFinalScore(correctedDimensionScores);
 
     return saveFactCheckHistory(ws, {
       media: { ...form, imageUrl: imageUrl || "" },
@@ -309,10 +310,12 @@ export default function FactCheckPage() {
       dimensionReasons,
       dimensionRedFlags,
       dimensionSkipped,
-      weightsSnapshot: weights,
-      totalScore,
-      variance,
-      confidenceInterval95: ci95,
+      correctionsSnapshot: corrections,
+      correctedDimensionScores,
+      totalScore: total,
+      band,
+      dimensionAlert,
+      alertDimensions,
       accepted: false,
       createdByUid: user.uid,
       createdByName: user.displayName ?? null,
@@ -391,7 +394,8 @@ export default function FactCheckPage() {
     );
   }
 
-  const cold = isColdStart(model?.trainingDataCount ?? 0);
+  // 모든 검증 행동의 보정 건수가 부족하면(항목별 3건 미만) 보정 없이 AI 점수 그대로 계산.
+  const noCalibration = countAppliedCorrections(model?.corrections) === 0;
   const busy = running || !!waiting;
 
   return (
@@ -400,7 +404,7 @@ export default function FactCheckPage() {
       subtitle={
         isGroup
           ? `모둠 작업실 · ${ws?.name ?? "우리 모둠"} — 같은 미디어는 모둠에서 한 번만 AI 호출해요`
-          : "AI가 5대 검증 행동(출처·저자·콘텐츠·이미지·감정)으로 미디어를 1~5점으로 평가하고, 내 가중치를 적용해 50점 만점으로 보여줘요"
+          : "AI가 5대 검증 행동(출처·저자·콘텐츠·이미지·감정)으로 미디어를 1~5점으로 평가하고, 교사 기준 보정을 적용해 50점 만점으로 보여줘요"
       }
       actions={<Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>}
     >
@@ -442,9 +446,9 @@ export default function FactCheckPage() {
               <option key={c.id} value={c.id}>{c.checklistName}</option>
             ))}
           </select>
-          {cold && (
+          {noCalibration && (
             <p className="mt-2 text-xs text-amber-700">
-              ※ 아직 평가가 적게 쌓여 있어요(현재 {model?.trainingDataCount ?? 0}개). 지금은 5대 검증 행동을 똑같이 보고 점수를 계산해요. "기준 다듬기"를 더 진행하면 {isGroup ? "모둠" : "너"}만의 기준이 반영됩니다.
+              ※ 아직 기준 다듬기 데이터가 적어 보정 없이 AI 점수를 그대로 계산했어요(항목별 3건 이상 필요). "기준 다듬기"를 더 진행하면 {isGroup ? "모둠" : "너"}와 교사의 점수 차이가 보정값으로 반영됩니다.
             </p>
           )}
         </div>
@@ -633,8 +637,8 @@ function TeacherMediaCard({ item, onClick }) {
 
 function HistoryCard({ item, onClick, showAuthor }) {
   const score = Number(item.finalTotalScore ?? item.totalScore ?? 0);
-  const ci = item.confidenceInterval95;
   const created = item.createdAt?.toDate?.() ?? null;
+  const hasAlert = item.dimensionAlert === true;
   const status = item.refined
     ? { label: "정교화됨", cls: "bg-amber-50 text-amber-700" }
     : item.accepted
@@ -670,10 +674,8 @@ function HistoryCard({ item, onClick, showAuthor }) {
           <p className="text-2xl font-extrabold text-brand-700">
             {score.toFixed(1)}<span className="text-xs text-slate-400">/50</span>
           </p>
-          {Array.isArray(ci) && ci.length === 2 && (
-            <p className="text-[10px] text-slate-400">
-              오차범위 {ci[0]?.toFixed?.(1)} ~ {ci[1]?.toFixed?.(1)}
-            </p>
+          {hasAlert && (
+            <p className="text-[10px] font-semibold text-rose-600">⚠️ 항목 경고</p>
           )}
         </div>
         <div className="text-right">

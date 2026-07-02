@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase.js";
 import { MODEL_VERSION, STANDARD_BASIS } from "../constants/model.js";
+import { computeCorrections, computeMastery } from "../utils/hpfm.js";
 
 /* ====================== 워크스페이스 추상화 ======================
  * 개인(users/{uid})과 모둠(groups/{groupId}) 작업실을 같은 함수로 다루기 위한 디스크립터.
@@ -205,19 +206,16 @@ export async function getStudentEvaluation(mediaId, uid) {
   return snap.exists() ? snap.data() : null;
 }
 
-/* ====================== algorithm_model (VAPM-3.0, 워크스페이스 스코프) ====================== */
+/* ====================== algorithm_model (VAPM-4.0, 워크스페이스 스코프) ====================== */
 
 function buildModelDoc(model) {
   return {
     version: MODEL_VERSION,
     standard_basis: STANDARD_BASIS,
-    weights: model.weights ?? null,
+    corrections: model.corrections ?? null,
     mastery: model.mastery ?? null,
     checklistId: model.checklistId ?? null,
     trainingDataCount: model.trainingDataCount ?? 0,
-    convergenceScore: model.convergenceScore ?? null,
-    teacherImplicitWeights: model.teacherImplicitWeights ?? null,
-    learningRate: model.learningRate ?? null,
     trainedAt: serverTimestamp(),
   };
 }
@@ -244,9 +242,43 @@ export async function updateAlgorithmModel(ws, computeNext) {
   });
 }
 
+/**
+ * 레이지 마이그레이션: 3.0(또는 corrections가 없는) 모델 문서를 로드할 때
+ * training_data의 modeling 레코드로 corrections·mastery를 재계산해 4.0 스키마로 덮어쓴다.
+ * gap 필드가 레코드마다 저장돼 있어 재계산 가능. training_data가 비면 corrections 전부 0.
+ * 개인·모둠 워크스페이스 모두 동일 적용. 별도 일괄 마이그레이션 스크립트는 만들지 않는다.
+ */
+async function migrateModelToV4(ws, ref, current) {
+  const trSnap = await getDocs(wsCol(ws, "algorithm_model", "current", "training_data"));
+  const records = trSnap.docs.map((d) => d.data());
+  const modeling = records.filter((r) => r.source === "modeling");
+  const corrections = computeCorrections(modeling);
+  const gapHistory = records
+    .map((r) => r.gap)
+    .filter((g) => g && Object.keys(g).length > 0);
+  const mastery = computeMastery(gapHistory);
+  const migrated = {
+    corrections,
+    mastery,
+    checklistId: current?.checklistId ?? null,
+    trainingDataCount: current?.trainingDataCount ?? records.length,
+  };
+  // 전체 덮어쓰기(merge 없음) — weights/convergenceScore 등 옛 필드를 제거한다.
+  await setDoc(ref, buildModelDoc(migrated));
+  return {
+    version: MODEL_VERSION,
+    standard_basis: STANDARD_BASIS,
+    ...migrated,
+  };
+}
+
 export async function getAlgorithmModel(ws) {
-  const snap = await getDoc(wsDoc(ws, "algorithm_model", "current"));
-  return snap.exists() ? snap.data() : null;
+  const ref = wsDoc(ws, "algorithm_model", "current");
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const current = snap.data();
+  if (current.version === MODEL_VERSION && current.corrections) return current;
+  return migrateModelToV4(ws, ref, current);
 }
 
 export function subscribeAlgorithmModel(ws, cb, onError) {

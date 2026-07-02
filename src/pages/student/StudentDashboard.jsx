@@ -27,11 +27,12 @@ import Mascot from "../../components/Mascot.jsx";
 import {
   DIMENSIONS,
   DIMENSION_INFO,
+  computeCorrections,
   computeMastery,
+  correctionsToArray,
+  countAppliedCorrections,
   generateFeedbackCards,
-  initialWeights,
   masteryToArray,
-  weightsToArray,
 } from "../../utils/hpfm.js";
 
 const TYPE_META = {
@@ -72,7 +73,7 @@ const STEPS = [
     index: "03",
     bigIcon: "verified",
     title: "미디어 팩트체크",
-    desc: "AI가 5대 검증 행동으로 미디어를 평가하면, 가중치를 적용해 50점 만점 점수와 오차범위를 보여줘요.",
+    desc: "AI가 5대 검증 행동으로 미디어를 평가하면, 교사 기준 보정을 적용해 50점 만점 점수와 신뢰 등급을 보여줘요.",
     cta: "팩트체크 실행",
     path: "/student/factcheck",
     accent: "orange",
@@ -156,8 +157,14 @@ export default function StudentDashboard() {
   }, [isGroup, ws?.id]);
 
   const greetingName = profile?.displayName ?? "학생";
-  const convergencePct =
-    model?.convergenceScore != null ? `${(model.convergenceScore * 100).toFixed(0)}%` : "-";
+
+  // 보정값: 모델 문서에 있으면 그대로, 없으면(레거시·미마이그레이션) modeling 학습데이터로 로컬 산출.
+  const corrections = useMemo(() => {
+    if (model?.corrections) return model.corrections;
+    const modeling = trainings.filter((t) => t.source === "modeling");
+    return computeCorrections(modeling);
+  }, [model, trainings]);
+  const appliedCount = countAppliedCorrections(corrections);
 
   // 체크리스트 필터에 따라 training_data를 부분 집합으로 잘라 마스터리·평가 습관을 재계산한다.
   // model.mastery / feedback_cards 자체는 워크스페이스 전역 누적치라 "전체" 필터일 때와 같다.
@@ -177,13 +184,9 @@ export default function StudentDashboard() {
     [filteredTrainings]
   );
 
-  const weightsForMastery = model?.weights && Object.keys(model.weights).length
-    ? model.weights
-    : initialWeights();
-
   const localMastery = useMemo(
-    () => computeMastery(weightsForMastery, filteredGapHistory),
-    [weightsForMastery, filteredGapHistory]
+    () => computeMastery(filteredGapHistory),
+    [filteredGapHistory]
   );
 
   const localCards = useMemo(
@@ -366,38 +369,43 @@ export default function StudentDashboard() {
 
           <section className="mb-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label={isGroup ? "모둠 체크리스트" : "내 체크리스트"} value={checklistCount} unit="개" tone="brand" icon="checklist" tag="진행 중" tagTone="emerald" />
-            <StatCard label="쌓인 평가" value={model?.trainingDataCount ?? 0} unit="개" tone="purple" icon="model_training" tag={model?.trainingDataCount >= 5 ? "기준 다듬는 중" : "기준 잡는 중"} tagTone={model?.trainingDataCount >= 5 ? "emerald" : "amber"} />
-            <StatCard label={isGroup ? "모둠 기준 자리잡힌 정도" : "내 기준 자리잡힌 정도"} value={convergencePct} tone="emerald" icon="trending_up" tag="성장 그래프" tagTone="slate" />
+            <StatCard label="쌓인 평가" value={model?.trainingDataCount ?? 0} unit="개" tone="purple" icon="model_training" tag={appliedCount >= 1 ? "기준 보정 적용 중" : "기준 잡는 중"} tagTone={appliedCount >= 1 ? "emerald" : "amber"} />
+            <StatCard label={isGroup ? "모둠 보정 적용 행동" : "보정 적용 검증행동"} value={appliedCount} unit="/ 5개" tone="emerald" icon="tune" tag="교사 기준 보정" tagTone="slate" />
             <StatCard label="팩트체크 기록" value={historyCount} unit="건" tone="orange" icon="history_edu" tag="누적" tagTone="slate" />
           </section>
 
-          {model?.weights && (
-            <section className="mb-10 rounded-3xl border border-slate-100 bg-white p-7 shadow-glow">
-              <div className="mb-4">
-                <h3 className="font-display text-xl font-bold tracking-tight text-ink">
-                  {isGroup ? "우리 모둠이 중요하게 보는 5대 검증 행동" : "내가 중요하게 보는 5대 검증 행동"}
-                </h3>
-                <p className="mt-1 text-xs text-ink-muted">
-                  평가를 거듭할수록 막대 길이가 판단 습관에 맞춰 조금씩 변해요. 다섯 막대를 합치면 100%가 돼요.
-                </p>
-              </div>
-              <div className="grid gap-2.5 md:grid-cols-2">
-                {weightsToArray(model.weights).map((w) => (
-                  <div key={w.code} className="flex items-center gap-3">
-                    <span className="w-40 truncate text-xs text-ink-variant">
-                      <span className="font-bold text-brand-600">{w.code}</span> {w.name}
+          <section className="mb-10 rounded-3xl border border-slate-100 bg-white p-7 shadow-glow">
+            <div className="mb-4">
+              <h3 className="font-display text-xl font-bold tracking-tight text-ink">
+                {isGroup ? "우리 모둠의 교사 기준 보정" : "내 교사 기준 보정"}
+              </h3>
+              <p className="mt-1 text-xs text-ink-muted">
+                같은 미디어를 교사와 채점한 평균 차이예요. AI 점수에 이 값을 더해 교사 기준에 맞춰줘요.
+                항목별 3건 이상 모여야 보정이 시작되고, 값은 ±1.0점으로 제한돼요.
+              </p>
+            </div>
+            <div className="grid gap-2.5 md:grid-cols-2">
+              {correctionsToArray(corrections).map((c) => (
+                <div key={c.code} className="flex items-center justify-between gap-3">
+                  <span className="w-40 truncate text-xs text-ink-variant">
+                    <span className="font-bold text-brand-600">{c.code}</span> {c.name}
+                  </span>
+                  {c.applied ? (
+                    <span
+                      className={`text-xs font-bold ${
+                        c.value > 0 ? "text-emerald-700" : c.value < 0 ? "text-rose-700" : "text-slate-500"
+                      }`}
+                    >
+                      {c.value > 0 ? "+" : ""}{c.value.toFixed(1)}점
+                      <span className="ml-1 font-normal text-ink-muted">({c.count}건)</span>
                     </span>
-                    <div className="flex-1">
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-surface-base">
-                        <div className="h-2 rounded-full bg-gradient-to-r from-brand-500 to-brand-600 transition-all duration-500" style={{ width: `${w.mu * 100}%` }} />
-                      </div>
-                    </div>
-                    <span className="w-16 text-right text-xs font-bold text-brand-700">{(w.mu * 100).toFixed(1)}%</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+                  ) : (
+                    <span className="text-[11px] text-ink-muted">3건 이상 필요 (현재 {c.count}건)</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
 
           {checklists.length > 1 && (
             <section className="mb-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-glow">
@@ -423,13 +431,13 @@ export default function StudentDashboard() {
             </section>
           )}
 
-          {model?.mastery && (
+          {(model?.mastery || filteredGapHistory.length > 0) && (
             <section className="mb-10 rounded-3xl border border-slate-100 bg-white p-7 shadow-glow">
               <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
                 <div>
                   <h3 className="font-display text-xl font-bold tracking-tight text-ink">검증 행동 마스터리</h3>
                   <p className="mt-1 text-xs text-ink-muted">
-                    각 검증 행동을 얼마나 안정적으로 수행하는지 보여줘요. 격차가 작고 σ가 줄어들수록 마스터리가 올라가요.
+                    각 검증 행동을 얼마나 안정적으로 수행하는지 보여줘요. 교사 기준과의 평균 격차가 작을수록 마스터리가 올라가요.
                   </p>
                 </div>
                 {checklists.length > 1 && (
@@ -451,10 +459,11 @@ export default function StudentDashboard() {
 
               <div className="grid gap-2.5 md:grid-cols-2">
                 {masteryToArray(localMastery).map((m) => {
-                  const pct = Math.max(0, Math.min(100, m.value * 100));
-                  const tone = pct >= 70 ? "emerald" : pct >= 40 ? "amber" : "rose";
-                  const barColor = tone === "emerald" ? "from-emerald-400 to-emerald-600" : tone === "amber" ? "from-amber-400 to-amber-600" : "from-rose-400 to-rose-600";
-                  const textColor = tone === "emerald" ? "text-emerald-700" : tone === "amber" ? "text-amber-700" : "text-rose-700";
+                  const noData = m.value == null;
+                  const pct = noData ? 0 : Math.max(0, Math.min(100, m.value * 100));
+                  const tone = noData ? "slate" : pct >= 70 ? "emerald" : pct >= 40 ? "amber" : "rose";
+                  const barColor = noData ? "from-slate-300 to-slate-400" : tone === "emerald" ? "from-emerald-400 to-emerald-600" : tone === "amber" ? "from-amber-400 to-amber-600" : "from-rose-400 to-rose-600";
+                  const textColor = noData ? "text-slate-400" : tone === "emerald" ? "text-emerald-700" : tone === "amber" ? "text-amber-700" : "text-rose-700";
                   const dimMissing = coverage.missing.includes(m.code);
                   return (
                     <div key={m.code} className="flex items-center gap-3">
@@ -472,7 +481,9 @@ export default function StudentDashboard() {
                         </div>
                       </div>
                       <span className={`w-16 text-right text-xs font-bold ${textColor} ${dimMissing ? "opacity-50" : ""}`}>
-                        {pct.toFixed(0)}%{pct < 40 && !dimMissing && " ⚠️"}{pct >= 80 && !dimMissing && " 🌟"}
+                        {noData ? "–" : `${pct.toFixed(0)}%`}
+                        {!noData && pct < 40 && !dimMissing && " ⚠️"}
+                        {!noData && pct >= 80 && !dimMissing && " 🌟"}
                       </span>
                     </div>
                   );

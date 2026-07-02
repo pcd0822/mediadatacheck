@@ -15,7 +15,7 @@
  */
 
 /** 현재 모델 버전. Firestore 문서의 `version` 필드에 저장됩니다. */
-export const MODEL_VERSION = "VAPM-3.0";
+export const MODEL_VERSION = "VAPM-4.0";
 
 /** 평가 기준 체계 식별자. Firestore 문서의 `standard_basis` 필드에 저장됩니다. */
 export const STANDARD_BASIS = "5_verification_actions";

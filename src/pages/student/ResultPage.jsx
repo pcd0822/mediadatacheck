@@ -12,26 +12,28 @@ import {
   getFactCheckHistory,
   listTrainingData,
   replaceFeedbackCards,
-  saveAlgorithmModel,
   updateAlgorithmModel,
   updateFactCheckHistory,
 } from "../../services/firestore.js";
 import {
   DIMENSIONS,
   DIMENSION_INFO,
-  bayesianUpdate,
+  applyCorrections,
   computeFinalScore,
   computeMastery,
-  confidenceInterval95,
-  convergenceScore,
+  countAppliedCorrections,
   generateFeedbackCards,
-  initialWeights,
-  isColdStart,
   isLegacyDimMap,
-  learningRate,
   migrateLegacyDimensionScores,
-  scoreVariance,
 } from "../../utils/hpfm.js";
+
+// 등급(band)별 표시 메타. hpfm.js SCORE_BANDS의 key와 1:1 대응.
+const BAND_META = {
+  high: { label: "신뢰 높음", cls: "bg-emerald-50 text-emerald-700", hint: "신뢰도가 높은 미디어로 판단됩니다." },
+  caution: { label: "주의", cls: "bg-amber-50 text-amber-700", hint: "총점은 보통이지만 일부 항목을 더 확인하는 게 좋아요." },
+  low: { label: "신뢰 낮음", cls: "bg-rose-50 text-rose-700", hint: "비판적 점검이 강하게 권장됩니다. (팩트체크 경고)" },
+  veryLow: { label: "매우 낮음", cls: "bg-rose-100 text-rose-800", hint: "신뢰하기 어려운 자료예요. 다른 자료를 우선 참고하세요." },
+};
 
 export default function ResultPage() {
   const { historyId } = useParams();
@@ -74,106 +76,77 @@ export default function ResultPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyId, ws?.type, ws?.id]);
 
-  // 학생 대시보드와 항상 같은 비중을 표시하도록 현재 model.weights를 우선 사용한다.
-  // history.weightsSnapshot은 저장 시점(학습 전일 수 있음)의 값이라 정교화·수용 이후엔 stale.
-  const weights =
-    (model?.weights && Object.keys(model.weights).length > 0
-      ? model.weights
-      : null) ??
-    history?.weightsSnapshot ??
-    initialWeights();
+  // 저장 시점에 적용됐던 보정값(스냅샷)을 우선 사용해 저장된 결과와 표시를 일치시킨다.
+  // (레거시 3.0 문서엔 correctionsSnapshot이 없으므로 현재 모델 보정값으로 폴백)
+  const corrections = history?.correctionsSnapshot ?? model?.corrections ?? null;
 
-  const totalScore = useMemo(
-    () => computeFinalScore(weights, scores),
-    [weights, scores]
+  // scores = AI 수준(1~5) 작업 점수(정교화 시 편집 대상). aiRaw = 저장된 AI 원점수(불변, 격차 기준).
+  const aiRaw = useMemo(() => {
+    const raw = history?.dimensionScores ?? {};
+    const normalized = isLegacyDimMap(raw) ? migrateLegacyDimensionScores(raw) : raw;
+    const out = {};
+    for (const d of DIMENSIONS) {
+      const v = Number(normalized?.[d]);
+      out[d] = Number.isFinite(v) ? v : null;
+    }
+    return out;
+  }, [history]);
+
+  const corrected = useMemo(
+    () => applyCorrections(scores, corrections),
+    [scores, corrections]
   );
-  const variance = useMemo(
-    () => scoreVariance(weights, scores),
-    [weights, scores]
-  );
-  const ci95 = useMemo(
-    () => confidenceInterval95(totalScore, variance),
-    [totalScore, variance]
-  );
+  const result = useMemo(() => computeFinalScore(corrected), [corrected]);
+
+  // 레거시(3.0) 문서는 보정 후 점수가 없으므로 저장된 totalScore를 그대로 표시한다.
+  const isLegacyDoc = history?.correctedDimensionScores == null && history?.version !== "VAPM-4.0";
+  const totalScore = isLegacyDoc
+    ? Number(history?.finalTotalScore ?? history?.totalScore ?? result.total)
+    : result.total;
+  const bandMeta = BAND_META[result.band] ?? BAND_META.veryLow;
 
   const setDimScore = (dim, val) =>
     setScores((s) => ({ ...s, [dim]: Number(val) }));
 
   const persistTraining = async ({ refined }) => {
     const dataId = `factcheck_${historyId}`;
-    const targetScore = totalScore;
-    const geminiScores = history.dimensionScores ?? {};
+    // 격차 = 학생 최종(수정) 점수 − AI 원점수. 수용(미수정)이면 gap ≈ 0.
+    // 수용/정교화는 보정값(corrections)을 바꾸지 않는다(교사 기준점이 없는 데이터).
+    // training_data에 기록만 하고 피드백 카드·마스터리 재계산에만 사용한다.
     const gap = {};
     for (const d of DIMENSIONS) {
       const a = Number(scores[d]);
-      const g = Number(geminiScores[d]);
+      const g = Number(aiRaw[d]);
       if (Number.isFinite(a) && Number.isFinite(g)) gap[d] = a - g;
     }
 
-    // 학습 데이터 1건 upsert(결정적 id)
     await appendTrainingData(ws, dataId, {
       historyId,
       checklistId: history.checklistId,
       mediaTitle: history.media?.title ?? null,
-      geminiScores,
+      geminiScores: history.dimensionScores ?? {},
       finalScores: { ...scores },
-      finalTotalScore: targetScore,
+      finalTotalScore: result.total,
       gap,
       source: refined ? "refine" : "accept",
     });
 
-    // 모델 누적 갱신을 트랜잭션으로 — 모둠원이 동시에 수용/정교화해도 lost update 방지.
-    // 현재(fresh) 가중치·카운트를 트랜잭션 안에서 읽어 계산한다.
-    const updated = await updateAlgorithmModel(ws, (current) => {
-      const baseWeights =
-        current?.weights && Object.keys(current.weights).length
-          ? current.weights
-          : initialWeights();
-      const tCountPrev = current?.trainingDataCount ?? 0;
-      const nextWeights = refined
-        ? bayesianUpdate(
-            baseWeights,
-            { dimensionScores: scores, gap },
-            { trainingDataCount: tCountPrev, refineMultiplier: 1.5 }
-          )
-        : bayesianUpdate(
-            baseWeights,
-            { dimensionScores: scores, gap: {} },
-            { trainingDataCount: tCountPrev }
-          );
-      const teacherImplicit = current?.teacherImplicitWeights ?? null;
-      const conv = teacherImplicit
-        ? convergenceScore(nextWeights, teacherImplicit)
-        : current?.convergenceScore ?? null;
-      const tCount = tCountPrev + 1;
-      return {
-        weights: nextWeights,
-        mastery: current?.mastery ?? null,
-        checklistId: current?.checklistId ?? history.checklistId,
-        trainingDataCount: tCount,
-        convergenceScore: conv,
-        teacherImplicitWeights: teacherImplicit,
-        learningRate: learningRate(tCount),
-      };
-    });
+    // 마스터리·피드백 카드를 누적 격차로 재계산. corrections는 그대로 유지(트랜잭션으로 lost update 방지).
+    const trainings = await listTrainingData(ws);
+    const gapHistory = trainings
+      .map((t) => t.gap)
+      .filter((g) => g && Object.keys(g).length > 0);
+    const cards = generateFeedbackCards(gapHistory);
+    await replaceFeedbackCards(ws, cards);
+    const mastery = computeMastery(gapHistory);
 
+    const updated = await updateAlgorithmModel(ws, (current) => ({
+      corrections: current?.corrections ?? null,
+      mastery,
+      checklistId: current?.checklistId ?? history.checklistId,
+      trainingDataCount: trainings.length,
+    }));
     setModel((m) => ({ ...(m ?? {}), ...updated }));
-
-    // 누적 학습 데이터의 격차 패턴으로 메타인지 피드백 카드 + 검증 행동별 마스터리 재계산
-    try {
-      const trainings = await listTrainingData(ws);
-      const gapHistory = trainings
-        .map((t) => t.gap)
-        .filter((g) => g && Object.keys(g).length > 0);
-      const cards = generateFeedbackCards(gapHistory);
-      await replaceFeedbackCards(ws, cards);
-
-      const mastery = computeMastery(updated.weights, gapHistory);
-      await saveAlgorithmModel(ws, { ...updated, mastery });
-      setModel((m) => ({ ...(m ?? {}), mastery }));
-    } catch (err) {
-      console.warn("마스터리·피드백 카드 갱신 실패", err);
-    }
   };
 
   const handleAccept = async () => {
@@ -185,7 +158,7 @@ export default function ResultPage() {
         finalDimensionScores: scores,
         finalTotalScore: totalScore,
       });
-      setSavedNote("이번 평가가 내 기준에 반영됐어요. 5가지 기준 비중이 조금 다듬어졌습니다.");
+      setSavedNote("이번 평가를 기록했어요. 마스터리와 평가 습관 분석이 갱신됐습니다. (보정값은 '기준 다듬기'에서만 바뀌어요)");
     } catch (e) {
       console.error(e);
       alert(`반영 중 오류: ${e.message}`);
@@ -221,7 +194,7 @@ export default function ResultPage() {
         finalDimensionScores: scores,
         finalTotalScore: totalScore,
       });
-      setSavedNote("내가 수정한 점수를 더 강하게 반영했어요. AI 결과와 다른 너의 판단이 큰 신호로 작동해요.");
+      setSavedNote("내가 수정한 점수를 기록했어요. AI와 다른 너의 판단이 평가 습관 분석에 반영돼요.");
       setMode("view");
     } catch (e) {
       console.error(e);
@@ -241,16 +214,12 @@ export default function ResultPage() {
       </Layout>
     );
 
-  const cold = isColdStart(model?.trainingDataCount ?? 0);
+  const noCalibration = countAppliedCorrections(corrections) === 0;
   const scorePct = Math.max(0, Math.min(100, (totalScore / 50) * 100));
   const hasScores = Object.keys(scores ?? {}).length > 0;
-  // 학생 가중치가 (거의) 균일이면 학습 전 상태로 간주
-  const uniformWeights = (() => {
-    const u = 1 / DIMENSIONS.length;
-    return DIMENSIONS.every(
-      (d) => Math.abs((weights?.[d]?.mu ?? u) - u) < 1e-3
-    );
-  })();
+  const alertNames = (result.alertDimensions ?? []).map(
+    (d) => `${d}(${DIMENSION_INFO[d]?.name ?? ""})`
+  );
 
   return (
     <Layout
@@ -317,18 +286,34 @@ export default function ResultPage() {
           <div className="space-y-4">
             {DIMENSIONS.map((dim) => {
               const info = DIMENSION_INFO[dim];
-              const w = weights?.[dim] ?? { mu: 1 / DIMENSIONS.length, sigma: 0.15 };
               const reason = history.dimensionReasons?.[dim];
               const redFlags = history.dimensionRedFlags?.[dim];
               const skipped =
                 history.dimensionSkipped?.[dim] === true ||
                 history.dimensionScores?.[dim] === null;
+              const aiVal = aiRaw[dim];
+              const correctedVal = corrected[dim];
+              const corr = Number(corrections?.[dim]?.value);
+              const hasCorr =
+                Number.isFinite(corr) && corr !== 0 && Number.isFinite(correctedVal);
+              const editing = mode === "refine";
               const hasScore = Number.isFinite(scores[dim]);
-              const value = hasScore ? scores[dim] : 3;
+              const sliderValue = hasScore ? scores[dim] : 3;
+              // 헤드라인 숫자: 보기 모드는 보정 후 값, 정교화 모드는 편집 중인 값.
+              const headline = editing
+                ? sliderValue
+                : Number.isFinite(correctedVal)
+                ? correctedVal
+                : Number.isFinite(aiVal)
+                ? aiVal
+                : null;
+              const isAlert = (result.alertDimensions ?? []).includes(dim);
               return (
                 <div
                   key={dim}
-                  className="rounded-2xl border border-slate-100 bg-white p-6 shadow-glow transition-transform hover:scale-[1.01]"
+                  className={`rounded-2xl border bg-white p-6 shadow-glow transition-transform hover:scale-[1.01] ${
+                    isAlert ? "border-rose-200 ring-1 ring-rose-100" : "border-slate-100"
+                  }`}
                 >
                   <div className="mb-4 flex items-start justify-between gap-3">
                     <div>
@@ -339,38 +324,52 @@ export default function ResultPage() {
                             메타인지
                           </span>
                         )}
+                        {isAlert && (
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+                            항목 경고
+                          </span>
+                        )}
                       </h3>
-                      <span className="rounded bg-surface-high px-2 py-0.5 text-[10px] font-bold text-ink-muted">
-                        내 가중치 {(w.mu * 100).toFixed(0)}%
-                      </span>
                       <p className="mt-1 text-[11px] text-ink-muted">
                         {info.description}
                       </p>
                     </div>
                     <div className="text-right">
-                      {skipped && !hasScore ? (
+                      {skipped && headline === null ? (
                         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
                           해당 없음 (N/A)
                         </span>
                       ) : (
-                        <span className="font-display text-2xl font-extrabold text-brand-600">
-                          {Number(value).toFixed(1)}
-                          <span className="text-base text-ink-muted">/5</span>
-                        </span>
+                        <>
+                          <span className="font-display text-2xl font-extrabold text-brand-600">
+                            {Number(headline).toFixed(1)}
+                            <span className="text-base text-ink-muted">/5</span>
+                          </span>
+                          {!editing && hasCorr && (
+                            <p className="mt-0.5 text-[11px] text-ink-muted">
+                              AI {Number(aiVal).toFixed(0)}점{" "}
+                              <span className={corr > 0 ? "text-emerald-600" : "text-rose-600"}>
+                                (보정 {corr > 0 ? "+" : ""}{corr.toFixed(1)})
+                              </span>
+                            </p>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
 
-                  {skipped && !hasScore && mode === "view" ? (
+                  {skipped && headline === null && mode === "view" ? (
                     <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-ink-muted">
                       본문에 시각 자료(사진·영상·그래프) 언급이 없어 이 행동은 평가에서 제외됐어요.
-                      가중치는 나머지 4개 행동에 자동 분배됩니다.
+                      나머지 4개 행동의 평균으로 총점이 계산됩니다.
                     </p>
                   ) : mode === "view" ? (
                     <div className="mb-3 h-2 overflow-hidden rounded-full bg-surface-base">
                       <div
-                        className="h-2 rounded-full bg-gradient-to-r from-brand-500 to-brand-600 transition-all duration-500"
-                        style={{ width: `${(value / 5) * 100}%` }}
+                        className={`h-2 rounded-full bg-gradient-to-r transition-all duration-500 ${
+                          isAlert ? "from-rose-400 to-rose-600" : "from-brand-500 to-brand-600"
+                        }`}
+                        style={{ width: `${(Number(headline) / 5) * 100}%` }}
                       />
                     </div>
                   ) : (
@@ -380,14 +379,20 @@ export default function ResultPage() {
                         min={1}
                         max={5}
                         step={1}
-                        value={value}
+                        value={sliderValue}
                         onChange={(e) => setDimScore(dim, e.target.value)}
                         className="flex-1 accent-brand-600"
                       />
                       <span className="w-10 text-right text-sm font-bold text-brand-700">
-                        {Number(value).toFixed(1)}
+                        {Number(sliderValue).toFixed(1)}
                       </span>
                     </div>
+                  )}
+
+                  {editing && (
+                    <p className="mb-3 text-[11px] text-ink-muted">
+                      내 점수를 조정하면 AI 원점수와의 차이가 학습 신호로 기록돼요(보정값 자체는 바뀌지 않아요).
+                    </p>
                   )}
 
                   {reason && (
@@ -425,12 +430,12 @@ export default function ResultPage() {
               </span>
               <span className="text-2xl font-bold text-slate-300">/50</span>
             </div>
-            <div className="mb-4 rounded-xl bg-brand-50 p-3">
-              <p className="text-xs font-medium text-brand-700">
-                대시보드의 내 기준 비중을 그대로 적용한 점수예요.
-              </p>
-              <p className="mt-1 text-[11px] text-brand-700/80">
-                95% 확률로 {ci95[0].toFixed(1)} ~ {ci95[1].toFixed(1)}점 사이일 거예요.
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <span className={`rounded-full px-3 py-1 text-xs font-bold ${bandMeta.cls}`}>
+                {bandMeta.label}
+              </span>
+              <p className="text-[11px] text-ink-muted">
+                AI 점수에 교사 기준 보정을 적용한 점수예요.
               </p>
             </div>
             <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-surface-base">
@@ -440,24 +445,24 @@ export default function ResultPage() {
               />
             </div>
             <p className="mb-5 text-center text-xs font-medium text-ink-variant">
-              {scorePct >= 80
-                ? "신뢰도 높은 미디어로 판단됩니다."
-                : scorePct >= 60
-                ? "일부 점검이 필요한 미디어입니다."
-                : "비판적 점검이 강하게 권장됩니다."}
+              {bandMeta.hint}
             </p>
 
+            {result.dimensionAlert && (
+              <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700">
+                ⚠️ 총점과 별개로 {alertNames.join(", ")} 확인이 심각하게 미흡해요(2점 미만).
+                이 항목은 총점이 괜찮아도 반드시 다시 살펴보세요.
+              </p>
+            )}
             {!hasScores && (
               <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
                 저장된 평가 점수를 읽지 못했어요. 새 미디어로 다시 팩트체크를 실행해주세요.
               </p>
             )}
-            {(cold || uniformWeights) && hasScores && (
+            {noCalibration && hasScores && (
               <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                {cold
-                  ? "아직 평가가 적게 쌓여 5가지 기준을 동일한 비중으로 계산했어요. "
-                  : "내 기준에 변화가 적어 5가지 기준이 거의 동일한 비중으로 계산됐어요. "}
-                "기준 다듬기" 페이지에서 미디어 점수를 다양하게 매겨보면 비중이 또렷해져요.
+                아직 기준 다듬기 데이터가 적어 보정 없이 AI 점수를 그대로 계산했어요(항목별 3건 이상 필요).
+                "기준 다듬기" 페이지에서 선생님 미디어를 더 채점하면 교사 기준 보정이 반영돼요.
               </p>
             )}
             {savedNote && (

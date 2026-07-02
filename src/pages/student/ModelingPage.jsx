@@ -11,6 +11,7 @@ import {
   getStudentEvaluation,
   listChecklists,
   listTeacherMediaWithTeacherEvals,
+  listTrainingData,
   replaceFeedbackCards,
   saveAlgorithmModel,
   saveStudentEvaluation,
@@ -19,20 +20,16 @@ import {
 import { cached, invalidate } from "../../utils/dataCache.js";
 import {
   DIMENSION_INFO,
+  MIN_CALIBRATION_COUNT,
   aggregateToDimensions,
-  bayesianActive,
-  bayesianUpdate,
+  computeCorrections,
   computeGap,
   computeMastery,
-  convergenceScore,
+  correctionsToArray,
+  countAppliedCorrections,
   generateFeedbackCards,
-  initialWeights,
-  isColdStart,
   isLegacyDimMap,
-  learningRate,
   migrateLegacyDimensionScores,
-  teacherImplicitWeights,
-  weightsToArray,
 } from "../../utils/hpfm.js";
 import { ensureItemMappings } from "../../utils/mappingCache.js";
 
@@ -169,39 +166,9 @@ export default function ModelingPage() {
         if (teacherDims) pairs.push({ studentDims, teacherDims, mediaId: m.id });
       }
 
-      const totalCount = (model?.trainingDataCount ?? 0) + pairs.length;
-      let weights = model?.weights && Object.keys(model.weights).length
-        ? { ...model.weights }
-        : initialWeights();
-
-      if (!isColdStart(totalCount) && pairs.length > 0) {
-        let count = model?.trainingDataCount ?? 0;
-        for (const p of pairs) {
-          const gap = computeGap(p.studentDims, p.teacherDims);
-          weights = bayesianUpdate(
-            weights,
-            { dimensionScores: p.studentDims, gap },
-            { trainingDataCount: count }
-          );
-          count += 1;
-        }
-      }
-
-      const teacherDimsList = media
-        .map((m) => {
-          const raw = m.teacherEvaluation?.dimensionScores;
-          if (!raw) return null;
-          return isLegacyDimMap(raw) ? migrateLegacyDimensionScores(raw) : raw;
-        })
-        .filter(Boolean);
-      const teacherImplicit = teacherImplicitWeights(teacherDimsList);
-      const conv = convergenceScore(weights, teacherImplicit);
-
-      const gapHistory = [];
+      // 이번에 채점한 미디어별 modeling 학습 데이터 upsert(결정적 id로 덮어쓰기).
       for (const p of pairs) {
         const gap = computeGap(p.studentDims, p.teacherDims);
-        gapHistory.push(gap);
-        // 결정적 id에 upsert(merge) — 삭제 폭풍 없이 같은 미디어는 덮어쓰기
         await appendTrainingData(ws, `media_${p.mediaId}`, {
           mediaId: p.mediaId,
           checklistId: activeChecklistId,
@@ -211,21 +178,28 @@ export default function ModelingPage() {
           source: "modeling",
         });
       }
+
+      // 보정값은 누적이 아니라 전량 재계산 — 워크스페이스의 modeling 레코드 전체에서
+      // 다시 계산한다(순서 무관·멱등). 수용/정교화(accept/refine)는 제외.
+      const allTrainings = await listTrainingData(ws);
+      const modelingRecords = allTrainings.filter((t) => t.source === "modeling");
+      const corrections = computeCorrections(modelingRecords);
+
+      const gapHistory = allTrainings
+        .map((t) => t.gap)
+        .filter((g) => g && Object.keys(g).length > 0);
       const cards = generateFeedbackCards(gapHistory);
       await replaceFeedbackCards(ws, cards);
 
-      const mastery = computeMastery(weights, gapHistory);
+      const mastery = computeMastery(gapHistory);
       const trained = {
-        weights,
+        corrections,
         mastery,
         checklistId: activeChecklistId,
-        trainingDataCount: totalCount,
-        convergenceScore: conv,
-        teacherImplicitWeights: teacherImplicit,
-        learningRate: learningRate(totalCount),
+        trainingDataCount: allTrainings.length,
       };
       await saveAlgorithmModel(ws, trained);
-      setModel(trained);
+      setModel((m) => ({ ...(m ?? {}), ...trained }));
       setJustFinished(true);
     } catch (e) {
       console.error(e);
@@ -261,17 +235,12 @@ export default function ModelingPage() {
     );
   }
 
-  const tCount = model?.trainingDataCount ?? 0;
-  const phaseLabel = isColdStart(tCount)
-    ? "기준 잡는 중"
-    : bayesianActive(tCount)
-    ? "기준 다듬는 중"
-    : "기준 시험해보는 중";
-  const phaseHint = isColdStart(tCount)
-    ? "평가가 더 모이면 본격적으로 기준이 다듬어져요"
-    : bayesianActive(tCount)
-    ? "이제 너의 평가 습관이 안정적으로 반영돼요"
-    : "조금만 더 평가하면 본격적인 다듬기가 시작돼요";
+  const appliedCount = countAppliedCorrections(model?.corrections);
+  const phaseLabel = appliedCount >= 1 ? "기준 보정 적용 중" : "기준 잡는 중";
+  const phaseHint =
+    appliedCount >= 1
+      ? `${appliedCount}개 검증 행동에 교사 기준 보정이 적용되고 있어요`
+      : `항목별로 ${MIN_CALIBRATION_COUNT}건 이상 모이면 보정이 시작돼요`;
 
   return (
     <Layout
@@ -301,37 +270,47 @@ export default function ModelingPage() {
         </>
       }
     >
-      {/* === 상단: 학습 결과 + 팩트체크 실행 === */}
-      {model?.weights && (
+      {/* === 상단: 보정 현황 + 팩트체크 실행 === */}
+      {model?.corrections && (
         <div className="card mb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-base font-bold text-slate-900">내가 중요하게 보는 5대 검증 행동</h3>
-            {model.convergenceScore != null && (
-              <span className="badge bg-brand-50 text-brand-700">
-                내 기준 자리잡힌 정도 {(model.convergenceScore * 100).toFixed(0)}%
-              </span>
-            )}
+            <h3 className="text-base font-bold text-slate-900">기준 보정 현황</h3>
+            <span className="badge bg-brand-50 text-brand-700">
+              보정 적용 {appliedCount} / 5개 검증 행동
+            </span>
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            막대 길이 = 그 검증 행동을 얼마나 중요하게 보는지. 평가가 쌓일수록 안정돼요.
+            같은 미디어를 교사와 내가 채점한 차이(평균 편차)를 검증 행동별 보정값으로 만들어요.
+            AI 점수에 이 보정값을 더해 교사 기준에 가깝게 맞춰줘요. 항목별 {MIN_CALIBRATION_COUNT}건
+            이상 모여야 보정이 시작돼요.
           </p>
           <div className="mt-3 space-y-2">
-            {weightsToArray(model.weights).map((w) => (
-              <div key={w.code} className="flex items-center gap-3">
+            {correctionsToArray(model.corrections).map((c) => (
+              <div key={c.code} className="flex items-center gap-3">
                 <span className="w-44 truncate text-sm text-slate-700">
-                  {w.name}
+                  <span className="font-bold text-brand-600">{c.code}</span> {c.name}
                 </span>
-                <div className="flex-1">
-                  <div className="h-2 w-full rounded-full bg-slate-100">
-                    <div
-                      className="h-2 rounded-full bg-brand-500 transition-all duration-700"
-                      style={{ width: `${w.mu * 100}%` }}
-                    />
-                  </div>
-                </div>
-                <span className="w-16 text-right text-sm font-semibold text-brand-700">
-                  {(w.mu * 100).toFixed(1)}%
-                </span>
+                {c.applied ? (
+                  <span
+                    className={`text-sm font-semibold ${
+                      c.value > 0
+                        ? "text-emerald-700"
+                        : c.value < 0
+                        ? "text-rose-700"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {c.value > 0 ? "+" : ""}
+                    {c.value.toFixed(1)}점
+                    <span className="ml-1 text-[11px] font-normal text-slate-400">
+                      ({c.count}건 반영)
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-400">
+                    {MIN_CALIBRATION_COUNT}건 이상 모이면 보정 시작 (현재 {c.count}건)
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -341,11 +320,11 @@ export default function ModelingPage() {
                 <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
                   check_circle
                 </span>
-                기준 다듬기 완료! 새 기준이 막대그래프에 반영되었어요.
+                기준 다듬기 완료! 보정 현황이 새로 계산되었어요.
               </span>
             ) : (
               <span className="text-[11px] text-slate-500">
-                미디어 평가를 마친 뒤 위쪽 "저장하고 기준 다듬기" 버튼을 누르면 막대가 갱신돼요.
+                미디어 평가를 마친 뒤 위쪽 "저장하고 기준 다듬기" 버튼을 누르면 보정값이 갱신돼요.
               </span>
             )}
             <Button variant="primary" onClick={() => navigate("/student/factcheck")}>

@@ -99,13 +99,10 @@ export async function createGroup(leader, { groupName, sourceChecklist, sourceMo
     await setDoc(doc(db, "groups", groupId, "algorithm_model", "current"), {
       version: MODEL_VERSION,
       standard_basis: STANDARD_BASIS,
-      weights: sourceModel.weights ?? null,
+      corrections: sourceModel.corrections ?? null,
       mastery: sourceModel.mastery ?? null,
       checklistId,
       trainingDataCount: sourceModel.trainingDataCount ?? 0,
-      convergenceScore: sourceModel.convergenceScore ?? null,
-      teacherImplicitWeights: sourceModel.teacherImplicitWeights ?? null,
-      learningRate: sourceModel.learningRate ?? null,
       trainedAt: serverTimestamp(),
     });
   }

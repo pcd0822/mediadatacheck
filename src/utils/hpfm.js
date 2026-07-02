@@ -1,8 +1,8 @@
 /**
- * VAPM (Verification Action-based Progressive fact-check Model) v3.0
+ * VAPM (Verification Action-based Progressive fact-check Model) v4.0
  *
  * 미디어 자료를 평가할 때 학생이 실제로 수행하는 5가지 검증 행동(V1~V5)에 대한
- * 베이지안 점진적 가중치 + 행동별 마스터리(Mastery) 모델.
+ * "교사 기준 보정(rater calibration / moderation)" 모델.
  *
  *  - V1 출처 확인 (Source Check)
  *  - V2 저자 확인 (Author Check)
@@ -10,15 +10,19 @@
  *  - V4 이미지·영상 확인 (Visual Verification)
  *  - V5 감정 반응 점검 (Emotional Reaction Check)
  *
- *  - 사전(Prior): 학생 가중치 W_student = {Vi: {mu, sigma}}, 초기 mu = 1/5 (0.20)
- *  - 갱신(Update):
- *      w_i^(t+1) = w_i^(t) + η × Gap_i × V_i_score / Σ(V_j_score²)
- *  - 학습률 η(t) = max(0.05, 0.2 × exp(-0.05 × t))
- *  - σ는 데이터가 누적될수록 점차 감소
- *  - 마스터리 Mastery(V_i) = (1 - σ_i) × (1 - |avg_gap_i| / 4)
+ * v3.0의 베이지안 가중치(μ,σ)·학습률 감쇠·cold start·신뢰구간·수렴도는 모두 제거했습니다.
+ * 대신 교육측정에서 확립된 채점자 보정 절차를 그대로 따릅니다:
  *
- * 본 파일은 v1(HPFM) → v2(IPFM) → v3(VAPM) 진화 흐름의 호환성을 위해
- * 파일명을 hpfm.js로 유지하지만 모델은 VAPM-3.0입니다.
+ *  1) 항목별 보정값: 같은 미디어를 교사·학생이 채점한 modeling 데이터에서
+ *     검증 행동별 평균 편차 correction_i = mean(teacher_i − student_i) 를 산출.
+ *     (누적이 아니라 전량 재계산 — 순서 무관·멱등. 최소 건수 미달 시 0, ±1.0 클램프)
+ *  2) AI 점수 보정: corrected_i = clamp(aiScore_i + correction_i, 1, 5)
+ *  3) 50점 환산: finalScore = mean(corrected_i) × 10  (10~50점)
+ *
+ *  - 마스터리 Mastery(V_i) = clamp(1 − mean(|gap_i|) / 4, 0, 1)
+ *
+ * 본 파일은 v1(HPFM) → v2(IPFM) → v3(VAPM) → v4(VAPM 보정) 진화 흐름의 호환성을 위해
+ * 파일명을 hpfm.js로 유지하지만 모델은 VAPM-4.0입니다.
  */
 
 // 모델 버전 상수는 단일 출처(src/constants/model.js)에서 가져와 재노출한다.
@@ -96,29 +100,29 @@ export const MEDIA_TYPE_PRESETS = {
   },
 };
 
-const INITIAL_SIGMA = 0.15;
-const SIGMA_DECAY = 0.95;
-const MIN_SIGMA = 0.02;
+/** 항목별 보정을 적용하기 위해 필요한 최소 모델링 건수. 미달 항목은 보정값 0. */
+export const MIN_CALIBRATION_COUNT = 3;
 
-export function initialWeights() {
-  const w = {};
-  for (const d of DIMENSIONS) w[d] = { mu: 1 / DIMENSIONS.length, sigma: INITIAL_SIGMA };
-  return w;
-}
+/** 보정값 상·하한 (±1.0점). 리커트 척도에서 한 눈금 이상 통째로 밀지 않도록 안정화. */
+export const MAX_CORRECTION = 1.0;
 
-/** η(t) = max(0.05, 0.2 × exp(-0.05 × t)) */
-export function learningRate(trainingDataCount = 0) {
-  return Math.max(0.05, 0.2 * Math.exp(-0.05 * trainingDataCount));
-}
+/**
+ * 최종 점수(50점) → 신뢰 등급.
+ * 컷 30점 = 전 항목 평균 3점('보통'). 준거참조(criterion-referenced) 기준.
+ * min 기준 내림차순으로 정렬 — scoreBand()가 위에서부터 처음 매칭되는 등급을 반환한다.
+ */
+export const SCORE_BANDS = [
+  { key: "high",    min: 40, label: "신뢰 높음" },
+  { key: "caution", min: 30, label: "주의" },
+  { key: "low",     min: 20, label: "신뢰 낮음" },
+  { key: "veryLow", min: 0,  label: "매우 낮음" },
+];
 
-/** Cold start: 누적 데이터가 3개 미만이면 균등 가중치만 적용. 5개 이상부터 베이즈 갱신 활성화. */
-export function isColdStart(trainingDataCount = 0) {
-  return trainingDataCount < 3;
-}
-
-export function bayesianActive(trainingDataCount = 0) {
-  return trainingDataCount >= 5;
-}
+/**
+ * 과락 기준. 보정 후 이 값 미만인 검증 행동이 하나라도 있으면 총점과 무관하게 경고.
+ * 평균이 개별 결함을 가리는 문제를 막기 위한 표준적 이중 기준(총점 + 개별 과락).
+ */
+export const DIMENSION_FLOOR = 2;
 
 /**
  * 체크리스트 항목별 점수를 검증 행동별 평균으로 집계.
@@ -168,101 +172,101 @@ export function computeGap(studentDims, teacherDims) {
 }
 
 /**
- * 베이지안 갱신.
- * @param {Record<string,{mu:number,sigma:number}>} prior
- * @param {{dimensionScores:Record<string,number>, gap:Record<string,number>}} obs
- * @param {{trainingDataCount?:number, refineMultiplier?:number}} opts
+ * 1단계 — 항목별 보정값(correction) 산출. 전량 재계산(누적·순서 무관·멱등).
+ *
+ * modeling(source === "modeling") 레코드 배열을 받아 검증 행동 V_i마다
+ *   rawCorrection_i = mean(gap_i)         // gap = teacher − student (computeGap)
+ *   correction_i    = 0                    (count_i < MIN_CALIBRATION_COUNT)
+ *                   = clamp(raw, ±MAX)     (그 외)
+ * 를 계산한다. 각 레코드에 이미 저장된 gap 필드를 그대로 집계하므로 결정적이다.
+ *
+ * @param {Array<{gap?:Record<string,number>}>} modelingRecords
+ * @returns {Record<string,{value:number,count:number}>}  { V1:{value,count}, ... }
  */
-export function bayesianUpdate(prior, obs, opts = {}) {
-  const t = opts.trainingDataCount ?? 0;
-  const eta = learningRate(t) * (opts.refineMultiplier ?? 1.0);
-
-  const scores = obs.dimensionScores ?? {};
-  const denom =
-    Object.values(scores).reduce(
-      (s, v) => s + (Number.isFinite(Number(v)) ? Number(v) * Number(v) : 0),
-      0
-    ) || 1;
-
-  const next = {};
-  for (const d of DIMENSIONS) {
-    const cur = prior?.[d] ?? { mu: 1 / DIMENSIONS.length, sigma: INITIAL_SIGMA };
-    const score = Number(scores[d]);
-    const gap = Number(obs.gap?.[d]);
-    let newMu = cur.mu;
-    if (Number.isFinite(score) && Number.isFinite(gap)) {
-      newMu = cur.mu + (eta * gap * score) / denom;
-    }
-    next[d] = {
-      mu: Math.max(0.01, newMu),
-      sigma: Math.max(MIN_SIGMA, cur.sigma * SIGMA_DECAY),
-    };
-  }
-  return normalize(next);
-}
-
-/** 가중치 정규화 (Σμ = 1). σ는 비례 보존. */
-export function normalize(weights) {
-  const sum = DIMENSIONS.reduce((s, d) => s + (weights[d]?.mu ?? 0), 0);
-  if (sum <= 0) return initialWeights();
+export function computeCorrections(modelingRecords = []) {
   const out = {};
   for (const d of DIMENSIONS) {
-    const w = weights[d] ?? { mu: 1 / DIMENSIONS.length, sigma: INITIAL_SIGMA };
-    out[d] = { mu: w.mu / sum, sigma: w.sigma };
+    const gaps = [];
+    for (const rec of modelingRecords) {
+      const g = Number(rec?.gap?.[d]);
+      if (Number.isFinite(g)) gaps.push(g);
+    }
+    const count = gaps.length;
+    if (count < MIN_CALIBRATION_COUNT) {
+      out[d] = { value: 0, count };
+      continue;
+    }
+    const raw = gaps.reduce((s, v) => s + v, 0) / count;
+    const clamped = Math.max(-MAX_CORRECTION, Math.min(MAX_CORRECTION, raw));
+    // 저장 시 부동소수 노이즈 제거(소수 2자리) — 멱등성·표시 안정성.
+    out[d] = { value: Math.round(clamped * 100) / 100, count };
   }
   return out;
 }
 
-/** 누적된 (학생, 교사) 페어들로부터 교사의 암묵적 가중치(평균 점수 비례) 추정. */
-export function teacherImplicitWeights(teacherDimsList) {
-  const sums = {};
-  const counts = {};
-  for (const dims of teacherDimsList) {
-    for (const d of DIMENSIONS) {
-      if (Number.isFinite(dims?.[d])) {
-        sums[d] = (sums[d] ?? 0) + dims[d];
-        counts[d] = (counts[d] ?? 0) + 1;
-      }
-    }
-  }
-  const w = {};
-  let total = 0;
+/**
+ * 2단계 — AI 점수에 보정 적용.
+ *   corrected_i = clamp(aiScore_i + correction_i, 1, 5)   (aiScore_i가 null이면 null)
+ * @param {Record<string,number|null>} aiScores    V1~V5 (1~5 정수, N/A는 null)
+ * @param {Record<string,{value:number,count:number}>} corrections
+ * @returns {Record<string,number|null>}
+ */
+export function applyCorrections(aiScores, corrections) {
+  const out = {};
   for (const d of DIMENSIONS) {
-    const v = counts[d] ? sums[d] / counts[d] : 1;
-    w[d] = v;
-    total += v;
+    const ai = aiScores?.[d];
+    if (ai === null || ai === undefined || !Number.isFinite(Number(ai))) {
+      out[d] = null;
+      continue;
+    }
+    const corr = Number(corrections?.[d]?.value);
+    const applied = Number(ai) + (Number.isFinite(corr) ? corr : 0);
+    out[d] = Math.max(1, Math.min(5, applied));
   }
-  if (total <= 0) {
-    const u = 1 / DIMENSIONS.length;
-    for (const d of DIMENSIONS) w[d] = u;
-    return w;
+  return out;
+}
+
+/** SCORE_BANDS 조회 — 총점(50점)에 해당하는 등급 key 반환. */
+export function scoreBand(total) {
+  const t = Number(total);
+  const val = Number.isFinite(t) ? t : 0;
+  for (const b of SCORE_BANDS) {
+    if (val >= b.min) return b.key;
   }
-  for (const d of DIMENSIONS) w[d] = w[d] / total;
-  return w;
+  return SCORE_BANDS[SCORE_BANDS.length - 1].key;
 }
 
 /**
- * 수렴도 = 1 - ||W_student - W_teacher_implicit|| / √n. 0~1.
- * 학생/교사 가중치가 모두 균등(미학습 상태)이면 의미 있는 값이 아니므로 null 반환.
+ * 3단계 — 보정된 점수를 50점으로 환산하고 등급·과락을 판정.
+ *   finalScore = round(mean(corrected_i where ≠ null) × 10, 소수 1자리)   // 10~50
+ * 가중치(μ) 없음. V4가 N/A면 나머지 항목 평균 × 10(자동 재정규화). 유효 항목 0개면 0점.
+ * 과락: corrected_i < DIMENSION_FLOOR 인 항목이 하나라도 있으면 dimensionAlert.
+ *
+ * @param {Record<string,number|null>} correctedScores
+ * @returns {{total:number, band:string, dimensionAlert:boolean, alertDimensions:string[]}}
  */
-export function convergenceScore(studentWeights, teacherImplicit) {
-  const uniform = 1 / DIMENSIONS.length;
-  const epsilon = 1e-6;
-  const studentIsUniform = DIMENSIONS.every(
-    (d) => Math.abs((studentWeights?.[d]?.mu ?? uniform) - uniform) < epsilon
-  );
-  const teacherIsUniform = DIMENSIONS.every(
-    (d) => Math.abs((teacherImplicit?.[d] ?? uniform) - uniform) < epsilon
-  );
-  if (studentIsUniform && teacherIsUniform) return null;
-
-  let sq = 0;
+export function computeFinalScore(correctedScores) {
+  const vals = [];
+  const alertDimensions = [];
   for (const d of DIMENSIONS) {
-    const sw = studentWeights?.[d]?.mu ?? uniform;
-    const tw = teacherImplicit?.[d] ?? uniform;
-    sq += (sw - tw) ** 2;
+    const raw = correctedScores?.[d];
+    if (raw === null || raw === undefined) continue;
+    const v = Number(raw);
+    if (!Number.isFinite(v)) continue;
+    vals.push(v);
+    if (v < DIMENSION_FLOOR) alertDimensions.push(d);
   }
-  return Math.max(0, 1 - Math.sqrt(sq) / Math.sqrt(DIMENSIONS.length));
+  if (vals.length === 0) {
+    return { total: 0, band: "veryLow", dimensionAlert: false, alertDimensions: [] };
+  }
+  const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+  const total = Math.round(mean * 10 * 10) / 10;
+  return {
+    total,
+    band: scoreBand(total),
+    dimensionAlert: alertDimensions.length > 0,
+    alertDimensions,
+  };
 }
 
 /** dimensionScores 객체에 v1 차원 키(D1~D8) 또는 v2 차원 키(C1~C6)가 있는지. */
@@ -272,71 +276,25 @@ export function isLegacyDimMap(dims) {
 }
 
 /**
- * 50점 만점 환산.
- *  - 가중평균 (Σμ_i × score_i)는 1~5 사이 값. ×10 하면 10~50.
- *  - 일부 검증 행동이 N/A(예: 이미지 없는 텍스트 자료의 V4)인 경우,
- *    실제 사용된 가중치만으로 정규화하여 나머지 4개 항목으로 점수를 산출.
- */
-export function computeFinalScore(weights, dimensionScores) {
-  let sum = 0;
-  let weightUsed = 0;
-  for (const d of DIMENSIONS) {
-    const mu = weights?.[d]?.mu ?? 1 / DIMENSIONS.length;
-    const s = Number(dimensionScores?.[d]);
-    if (!Number.isFinite(s)) continue;
-    sum += mu * s;
-    weightUsed += mu;
-  }
-  if (weightUsed <= 0) return 0;
-  const normalized = sum / weightUsed;
-  return Math.round(normalized * 10 * 10) / 10;
-}
-
-/** 점수 분산. Var(score×10) ≈ 100 × Σ score² × σ². N/A 행동은 합산에서 제외. */
-export function scoreVariance(weights, dimensionScores) {
-  let v = 0;
-  for (const d of DIMENSIONS) {
-    const sigma = weights?.[d]?.sigma ?? INITIAL_SIGMA;
-    const s = Number(dimensionScores?.[d]);
-    if (!Number.isFinite(s)) continue;
-    v += s * s * sigma * sigma;
-  }
-  return v * 100;
-}
-
-export function confidenceInterval95(score, variance) {
-  const margin = 1.96 * Math.sqrt(Math.max(0, variance));
-  return [
-    Math.max(0, Math.round((score - margin) * 10) / 10),
-    Math.min(50, Math.round((score + margin) * 10) / 10),
-  ];
-}
-
-/**
  * 검증 행동별 마스터리(Mastery) 산출.
- *   Mastery(V_i) = (1 - σ_i) × (1 - |avg_gap_i| / 4)
- * - 0~1 사이.
- * - 1에 가까울수록 그 검증 행동을 안정적으로(=낮은 σ, 작은 격차) 수행한다는 뜻.
+ *   Mastery(V_i) = clamp(1 − mean(|gap_i|) / 4, 0, 1)
+ * - "교사 기준과의 평균 격차가 작을수록 그 검증 행동에 숙련" 이라는 의미.
+ * - 해당 항목 gap 데이터가 하나도 없으면 null(표시 시 '데이터 없음').
  *
- * @param {Record<string,{mu:number,sigma:number}>} weights
  * @param {Array<Record<string,number>>} gapHistory  // 누적 학습 데이터의 gap 객체 리스트
  */
-export function computeMastery(weights, gapHistory = []) {
+export function computeMastery(gapHistory = []) {
   const out = {};
   for (const d of DIMENSIONS) {
-    const sigma = Number(weights?.[d]?.sigma);
-    const sigmaPart = Number.isFinite(sigma)
-      ? Math.max(0, Math.min(1, 1 - sigma))
-      : 1 - INITIAL_SIGMA;
     const gaps = gapHistory
       .map((h) => Number(h?.[d]))
       .filter((v) => Number.isFinite(v));
-    let gapPart = 1;
-    if (gaps.length > 0) {
-      const avgAbs = gaps.reduce((s, v) => s + Math.abs(v), 0) / gaps.length;
-      gapPart = Math.max(0, Math.min(1, 1 - avgAbs / 4));
+    if (gaps.length === 0) {
+      out[d] = null;
+      continue;
     }
-    out[d] = Math.max(0, Math.min(1, sigmaPart * gapPart));
+    const avgAbs = gaps.reduce((s, v) => s + Math.abs(v), 0) / gaps.length;
+    out[d] = Math.max(0, Math.min(1, 1 - avgAbs / 4));
   }
   return out;
 }
@@ -345,7 +303,7 @@ export function masteryToArray(mastery) {
   return DIMENSIONS.map((d) => ({
     code: d,
     name: DIMENSION_INFO[d].name,
-    value: Number(mastery?.[d] ?? 0),
+    value: mastery?.[d] ?? null,
   }));
 }
 
@@ -506,15 +464,30 @@ function buildCard(dim, type, mean, variance) {
   };
 }
 
-/** 대시보드/결과 화면용 정렬된 검증 행동 가중치 배열. */
-export function weightsToArray(weights) {
-  return DIMENSIONS.map((d) => ({
-    code: d,
-    name: DIMENSION_INFO[d].name,
-    framework: DIMENSION_INFO[d].framework,
-    mu: weights?.[d]?.mu ?? 1 / DIMENSIONS.length,
-    sigma: weights?.[d]?.sigma ?? INITIAL_SIGMA,
-  }));
+/**
+ * 대시보드/결과 화면용 정렬된 검증 행동 보정값 배열.
+ * (v3.0 weightsToArray 대체 — 가중치 대신 항목별 보정값·건수·적용 여부를 표시)
+ */
+export function correctionsToArray(corrections) {
+  return DIMENSIONS.map((d) => {
+    const count = Number(corrections?.[d]?.count ?? 0);
+    return {
+      code: d,
+      name: DIMENSION_INFO[d].name,
+      framework: DIMENSION_INFO[d].framework,
+      value: Number(corrections?.[d]?.value ?? 0),
+      count,
+      applied: count >= MIN_CALIBRATION_COUNT,
+    };
+  });
+}
+
+/** 보정이 실제로 적용된(건수 ≥ MIN_CALIBRATION_COUNT) 검증 행동 수. */
+export function countAppliedCorrections(corrections) {
+  return DIMENSIONS.reduce(
+    (n, d) => n + (Number(corrections?.[d]?.count ?? 0) >= MIN_CALIBRATION_COUNT ? 1 : 0),
+    0
+  );
 }
 
 /* ============================================================
