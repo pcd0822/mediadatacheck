@@ -15,7 +15,13 @@
  */
 
 /** 현재 모델 버전. Firestore 문서의 `version` 필드에 저장됩니다. */
-export const MODEL_VERSION = "VAPM-4.0";
+export const MODEL_VERSION = "VAPM-5.0";
 
-/** 평가 기준 체계 식별자. Firestore 문서의 `standard_basis` 필드에 저장됩니다. */
-export const STANDARD_BASIS = "5_verification_actions";
+/**
+ * 평가 기준 체계 식별자. Firestore 문서의 `standard_basis` 필드에 저장됩니다.
+ *
+ * v5.0에서 채점 단위가 "5대 검증 행동(V1~V5)"에서 "학생이 만든 체크리스트 항목"으로
+ * 바뀌었기 때문에 이 값도 함께 바뀝니다. 5대 검증 행동은 점수 계산에서 빠지고
+ * 항목의 분류·지표별 평균 표시(분석/비교)에만 쓰입니다.
+ */
+export const STANDARD_BASIS = "student_checklist_items";

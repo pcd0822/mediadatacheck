@@ -57,22 +57,8 @@ service cloud.firestore {
       // 삭제 금지
       allow delete: if false;
 
-      // 학생 체크리스트
+      // 학생 체크리스트 — v5.0에서 점수 산출의 유일한 근거
       match /checklists/{checklistId} {
-        allow read, write: if isSelf(uid);
-      }
-
-      // VAPM 알고리즘 모델 + 하위 training_data
-      match /algorithm_model/{docId} {
-        allow read, write: if isSelf(uid);
-
-        match /training_data/{dataId} {
-          allow read, write: if isSelf(uid);
-        }
-      }
-
-      // 메타인지 피드백 카드
-      match /feedback_cards/{cardId} {
         allow read, write: if isSelf(uid);
       }
 
@@ -80,28 +66,75 @@ service cloud.firestore {
       match /factcheck_history/{historyId} {
         allow read, write: if isSelf(uid);
       }
+
+      // ⚠️ v4.0까지 있던 algorithm_model / training_data / feedback_cards 규칙은 제거했다.
+      //    교사 기준 보정·마스터리·피드백 카드가 사라져 더 이상 쓰지 않는 컬렉션이다.
+      //    (기존 문서가 남아 있어도 이제 읽기·쓰기 모두 거부된다 — 코드에서도 접근하지 않는다)
     }
 
-    // ====== media_items/{mediaId} : 교사가 등록한 미디어 ======
+    // ====== media_items/{mediaId} : 미디어 자료 ======
+    // v5.0: 등록 주체가 둘.
+    //   registeredBy == "teacher" → 학급 공통 필수 자료(isRequired: true). 로그인 사용자 전체 열람.
+    //   registeredBy == "group"   → 그 모둠(groupId)만 열람·평가. 등록/수정/삭제는 조장만.
+    //
+    // ⚠️ 규칙은 쿼리 필터가 아니다. 목록 쿼리가 읽을 수 없는 문서를 하나라도 포함하면
+    //    쿼리 전체가 실패하므로, 클라이언트는 registeredBy=="teacher" 또는
+    //    groupId==<내 모둠> 으로 좁혀서 조회해야 한다 (services/firestore.js 참고).
     match /media_items/{mediaId} {
-      // 학생도 미디어 목록/본문을 봐야 하므로 로그인 사용자 전체 읽기 허용
-      allow read: if isSignedIn();
+      // registeredBy 필드가 없는 v4.0 이전 문서도 안전하게 다루기 위해 'in' 으로 존재를 먼저 확인.
+      function isGroupMedia() {
+        return 'registeredBy' in resource.data
+               && resource.data.registeredBy == "group";
+      }
 
-      // 작성/수정/삭제는 교사만
+      allow read: if isSignedIn()
+                  && (
+                       !isGroupMedia()                                  // 교사 자료 · 레거시 자료
+                       || isGroupMember(resource.data.groupId)          // 우리 모둠 자료
+                       || isTeacher()                                   // 교사는 모둠 자료도 열람 가능
+                     );
+
+      // 교사 등록: 본인 uid + 공통 필수 자료로만
       allow create: if isTeacher()
-                    && request.resource.data.uploadedBy == request.auth.uid;
-      allow update, delete: if isTeacher();
+                    && request.resource.data.uploadedBy == request.auth.uid
+                    && request.resource.data.registeredBy == "teacher"
+                    && request.resource.data.isRequired == true;
 
-      // 교사 평가(미디어당 1건, docId='default')
-      match /teacher_evaluation/{docId} {
-        allow read: if isSignedIn();   // 학생 모델링 페이지가 읽어야 함
-        allow write: if isTeacher();
-      }
+      // 모둠 등록: 그 모둠의 조장만, 자기 모둠 id로만, 공통 필수로 위장 불가
+      allow create: if isSignedIn()
+                    && request.resource.data.uploadedBy == request.auth.uid
+                    && request.resource.data.registeredBy == "group"
+                    && request.resource.data.groupId is string
+                    && isGroupLeader(request.resource.data.groupId)
+                    && request.resource.data.isRequired == false;
 
-      // 학생 평가(미디어×학생별 1건, docId = 학생 uid)
-      match /student_evaluations/{evalUid} {
-        allow read, write: if isSelf(evalUid);
-      }
+      // 수정: 교사는 전부, 모둠 자료는 그 모둠 조장만.
+      // 등록 주체(registeredBy/groupId)는 수정으로 바꿀 수 없다 — 모둠 자료를 공통 자료로
+      // 승격시키거나 다른 모둠으로 옮기는 것을 막는다.
+      // 단 하나의 예외: registeredBy가 아예 없는 v4.0 이전 문서에 교사가 메타를 채우는
+      // 일회성 백필(backfillLegacyMediaItems)은 "teacher"로만 채우도록 허용한다.
+      allow update: if (
+                        isTeacher()
+                        || (isGroupMedia() && isGroupLeader(resource.data.groupId))
+                      )
+                    && (
+                         (
+                           'registeredBy' in resource.data
+                           && request.resource.data.registeredBy == resource.data.registeredBy
+                           && request.resource.data.groupId == resource.data.groupId
+                         )
+                         || (
+                           isTeacher()
+                           && !('registeredBy' in resource.data)
+                           && request.resource.data.registeredBy == "teacher"
+                         )
+                       );
+
+      allow delete: if isTeacher()
+                    || (isGroupMedia() && isGroupLeader(resource.data.groupId));
+
+      // ⚠️ v4.0의 teacher_evaluation / student_evaluations 서브컬렉션 규칙은 제거했다.
+      //    교사 채점이 학생 점수 계산에 개입하는 경로를 없앴기 때문이다(v5.0).
     }
 
     // ====== groups/{groupId} : 모둠 협업 작업실 ======
@@ -127,27 +160,58 @@ service cloud.firestore {
         allow delete: if isSelf(memberUid) || isGroupLeader(groupId);
       }
 
-      // 공유 작업실 데이터: 멤버만 read/write
+      // 공유 작업실 데이터: 멤버만 read/write.
+      // 교사는 수업 진행 현황·학급 집계를 위해 **읽기만** 허용한다(쓰기는 불가).
       match /checklists/{checklistId} {
-        allow read, write: if isGroupMember(groupId);
-      }
-      match /algorithm_model/{docId} {
-        allow read, write: if isGroupMember(groupId);
-
-        match /training_data/{dataId} {
-          allow read, write: if isGroupMember(groupId);
-        }
-      }
-      match /feedback_cards/{cardId} {
-        allow read, write: if isGroupMember(groupId);
+        allow read: if isGroupMember(groupId) || isTeacher();
+        allow write: if isGroupMember(groupId);
       }
       match /factcheck_history/{historyId} {
-        allow read, write: if isGroupMember(groupId);
+        allow read: if isGroupMember(groupId) || isTeacher();
+        allow write: if isGroupMember(groupId);
       }
-      // single-flight 팩트체크 실행 조정 문서
+      // single-flight 팩트체크 실행 조정 문서 (미디어당 Gemini 1회 호출)
       match /factcheck_runs/{runKey} {
         allow read, write: if isGroupMember(groupId);
       }
+
+      // ===== 수업 활동(순차 게이트) =====
+      // 진행 단계. 교사는 읽기 + **강제 진행/초기화를 위해 쓰기도** 허용한다.
+      match /progress/{docId} {
+        allow read: if isGroupMember(groupId) || isTeacher();
+        allow write: if isGroupMember(groupId) || isTeacher();
+      }
+      // 1단계 "이 지표를 빠뜨린 이유" — 교사가 열람한다.
+      match /reflections/{dimension} {
+        allow read: if isGroupMember(groupId) || isTeacher();
+        allow write: if isGroupMember(groupId);
+      }
+      // 3단계 블라인드 점수.
+      // ⚠️ 제출 후 잠금(locked)은 클라이언트 트랜잭션으로만 지키는 소프트 락이다.
+      //    규칙으로도 막으려면 아래 update 조건이 필요하다: 잠긴 문서는 수정 불가.
+      match /blind_scores/{scoreId} {
+        allow read: if isGroupMember(groupId) || isTeacher();
+        allow create: if isGroupMember(groupId)
+                      && request.resource.data.uid == request.auth.uid;
+        // 본인 문서만, 그리고 이미 잠겼으면 어떤 수정도 거부한다.
+        // (locked 필드가 없는 문서도 안전하게 다루기 위해 'in'으로 존재를 먼저 확인)
+        allow update: if isGroupMember(groupId)
+                      && resource.data.uid == request.auth.uid
+                      && (!('locked' in resource.data) || resource.data.locked != true);
+        allow delete: if false;
+      }
+      // 4단계 원인 유형 태그 / 성찰 답변 — 본인 것만 쓰고, 모둠원·교사는 읽는다.
+      match /cause_tags/{tagId} {
+        allow read: if isGroupMember(groupId) || isTeacher();
+        allow write: if isGroupMember(groupId)
+                     && request.resource.data.uid == request.auth.uid;
+      }
+      match /reflection_answers/{uid} {
+        allow read: if isGroupMember(groupId) || isTeacher();
+        allow write: if isSelf(uid) && isGroupMember(groupId);
+      }
+
+      // ⚠️ algorithm_model / feedback_cards 규칙은 v5.0에서 제거(위 users 주석 참고).
     }
 
     // 그 외 모든 경로 차단

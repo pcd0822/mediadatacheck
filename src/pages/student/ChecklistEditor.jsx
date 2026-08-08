@@ -266,6 +266,15 @@ export default function ChecklistEditor() {
         </>
       }
     >
+      <div className="mb-4 rounded-2xl border border-brand-100 bg-brand-50/50 px-5 py-4 text-[13px] leading-6 text-ink-variant">
+        <p className="font-semibold text-brand-800">이 체크리스트가 점수의 유일한 근거예요</p>
+        <p className="mt-1">
+          팩트체크를 실행하면 AI가 <strong>여기 적힌 질문과 루브릭만 보고</strong> 항목마다 1~5점을
+          매겨요. 만점은 <strong>항목 수 × 5점</strong>이 됩니다. 루브릭(각 점수의 의미)을
+          구체적으로 쓸수록 AI 채점이 우리 기준에 가까워져요. 교사 점수는 어디에도 반영되지 않아요.
+        </p>
+      </div>
+
       {remoteChanged && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <p className="text-sm text-amber-800">

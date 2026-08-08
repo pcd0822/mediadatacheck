@@ -6,3 +6,10 @@ dist
 .netlify
 .DS_Store
 *.log
+
+# 관리자 스크립트 관련 — 절대 커밋 금지
+# 서비스 계정 키(프로젝트 전체 관리자 권한)
+serviceAccount*.json
+*-firebase-adminsdk-*.json
+# reset-v5.mjs 백업 (학생 평가 데이터·개인정보 포함)
+backups/

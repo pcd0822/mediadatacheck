@@ -13,10 +13,9 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
 } from "firebase/firestore";
 import { db } from "../firebase.js";
-import { MODEL_VERSION, STANDARD_BASIS } from "../constants/model.js";
-import { computeCorrections, computeMastery } from "../utils/hpfm.js";
 
 /* ====================== 워크스페이스 추상화 ======================
  * 개인(users/{uid})과 모둠(groups/{groupId}) 작업실을 같은 함수로 다루기 위한 디스크립터.
@@ -67,24 +66,76 @@ export async function updateTeacherAuthCode({ salt, codeHash }) {
   );
 }
 
-/* ====================== media_items (교사가 등록, 전역) ====================== */
+/* ====================== media_items ======================
+ * v5.0에서 등록 주체가 둘로 늘었다.
+ *   registeredBy: "teacher" → 전 학급 공통 자료(isRequired: true). 모두 열람·평가 가능.
+ *   registeredBy: "group"   → 그 모둠(groupId)만 열람·평가 가능. 조장만 등록/수정/삭제.
+ *
+ * ⚠️ Firestore 보안 규칙은 쿼리 필터가 아니다. 모둠 자료를 규칙으로 격리하려면
+ *    클라이언트 쿼리도 반드시 registeredBy / groupId로 좁혀야 한다. 그래서 목록 조회는
+ *    "교사 자료"와 "내 모둠 자료" 두 갈래로 나뉜다.
+ * ⚠️ where + orderBy 조합은 복합 인덱스를 요구하므로(수동 배포 단계 추가) 정렬은
+ *    클라이언트에서 처리한다. 학급 단위 컬렉션이라 문서 수가 적다.
+ */
 
-export async function createMediaItem(teacherUid, data) {
-  const ref = await addDoc(collection(db, "media_items"), {
-    title: data.title,
-    content: data.content,
+/** 미디어 본문 필드. 등록 주체 메타(registeredBy/groupId/isRequired)와 분리해 다룬다. */
+function buildMediaPayload(data) {
+  return {
+    title: data.title ?? "",
+    subtitle: data.subtitle ?? "",
+    content: data.content ?? "",
+    // v4.0까지의 필드명은 thumbnailUrl이었다. v5.0 정식 필드는 imageUrl이고,
+    // 읽을 때는 mediaImageUrl()로 두 필드를 함께 본다(기존 문서 보존).
+    imageUrl: data.imageUrl ?? "",
+    publishedAt: data.publishedAt ?? "", // "YYYY-MM-DD" 문자열(입력값 그대로, 검증하지 않음)
+    publisher: data.publisher ?? "",
     link: data.link ?? "",
-    thumbnailUrl: data.thumbnailUrl ?? "",
-    uploadedBy: teacherUid,
+  };
+}
+
+/** 기존 문서(thumbnailUrl)와 v5.0 문서(imageUrl)를 함께 읽기 위한 헬퍼. */
+export function mediaImageUrl(media) {
+  return media?.imageUrl || media?.thumbnailUrl || "";
+}
+
+function sortByCreatedDesc(list) {
+  return [...list].sort((a, b) => {
+    const at = a.createdAt?.toMillis?.() ?? 0;
+    const bt = b.createdAt?.toMillis?.() ?? 0;
+    return bt - at;
+  });
+}
+
+/**
+ * 미디어 등록.
+ * @param {{uid:string, registeredBy:"teacher"|"group", groupId?:string}} author
+ */
+export async function createMediaItem(author, data) {
+  const isTeacher = author.registeredBy === "teacher";
+  if (!isTeacher && !author.groupId) {
+    throw new Error("모둠 자료를 등록하려면 모둠 작업실이 필요해요.");
+  }
+  const ref = await addDoc(collection(db, "media_items"), {
+    ...buildMediaPayload(data),
+    registeredBy: isTeacher ? "teacher" : "group",
+    groupId: isTeacher ? null : author.groupId,
+    isRequired: isTeacher, // 교사 자료 = 학급 공통 필수
+    uploadedBy: author.uid,
+    uploadedByName: author.name ?? null,
     createdAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-export async function listMediaItems() {
-  const q = query(collection(db, "media_items"), orderBy("createdAt", "desc"));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+export async function updateMediaItem(mediaId, data) {
+  await updateDoc(doc(db, "media_items", mediaId), {
+    ...buildMediaPayload(data),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteMediaItem(mediaId) {
+  await deleteDoc(doc(db, "media_items", mediaId));
 }
 
 export async function getMediaItem(mediaId) {
@@ -92,43 +143,56 @@ export async function getMediaItem(mediaId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export async function updateMediaItem(mediaId, data) {
-  const patch = {
-    title: data.title,
-    content: data.content,
-    link: data.link ?? "",
-    updatedAt: serverTimestamp(),
-  };
-  if (data.thumbnailUrl !== undefined) {
-    patch.thumbnailUrl = data.thumbnailUrl;
-  }
-  await updateDoc(doc(db, "media_items", mediaId), patch);
-}
-
-export async function deleteMediaItem(mediaId) {
-  await deleteDoc(doc(db, "media_items", mediaId));
-}
-
-/* ====================== teacher_evaluation (전역) ====================== */
-
-export async function setTeacherEvaluation(mediaId, evaluation) {
-  const ref = doc(db, "media_items", mediaId, "teacher_evaluation", "default");
-  await setDoc(
-    ref,
-    {
-      items: evaluation.items,
-      totalScore: evaluation.totalScore ?? null,
-      dimensionScores: evaluation.dimensionScores ?? null,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
+/** 학급 공통(교사 등록) 자료. 학생·교사 모두 열람 가능. */
+export async function listTeacherMediaItems() {
+  const snap = await getDocs(
+    query(collection(db, "media_items"), where("registeredBy", "==", "teacher"))
   );
+  return sortByCreatedDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
 }
 
-export async function getTeacherEvaluation(mediaId) {
-  const ref = doc(db, "media_items", mediaId, "teacher_evaluation", "default");
-  const snap = await getDoc(ref);
-  return snap.exists() ? snap.data() : null;
+/** 특정 모둠이 등록한 자료. 규칙상 그 모둠원만 읽을 수 있다. */
+export async function listGroupMediaItems(groupId) {
+  if (!groupId) return [];
+  const snap = await getDocs(
+    query(collection(db, "media_items"), where("groupId", "==", groupId))
+  );
+  return sortByCreatedDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+}
+
+/**
+ * 교사 대시보드용 — 내가 올린 자료 전부(registeredBy가 없는 v4.0 이전 문서 포함).
+ * 학생 목록 쿼리는 registeredBy로 좁히므로, 옛 문서는 backfillLegacyMediaItems()로
+ * 한 번 메타를 채워야 학생 화면에 다시 나타난다.
+ */
+export async function listMediaItemsByUploader(uid) {
+  const snap = await getDocs(
+    query(collection(db, "media_items"), where("uploadedBy", "==", uid))
+  );
+  return sortByCreatedDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+}
+
+/**
+ * v4.0 이전 문서에 v5.0 등록 메타를 채운다(일회성, 멱등).
+ * 교사 대시보드 진입 시 1회 실행되며, 이미 채워진 문서는 건드리지 않는다.
+ * @returns {Promise<number>} 실제로 갱신한 문서 수
+ */
+export async function backfillLegacyMediaItems(items) {
+  const targets = (items ?? []).filter((m) => !m.registeredBy);
+  for (const m of targets) {
+    await updateDoc(doc(db, "media_items", m.id), {
+      registeredBy: "teacher",
+      groupId: null,
+      isRequired: true,
+      // 옛 썸네일을 v5.0 정식 필드로 옮긴다(원본 필드는 남겨둠).
+      imageUrl: m.imageUrl || m.thumbnailUrl || "",
+      subtitle: m.subtitle ?? "",
+      publisher: m.publisher ?? "",
+      publishedAt: m.publishedAt ?? "",
+      updatedAt: serverTimestamp(),
+    });
+  }
+  return targets.length;
 }
 
 /* ====================== checklists (워크스페이스 스코프) ====================== */
@@ -184,156 +248,6 @@ export async function deleteChecklist(ws, checklistId) {
   await deleteDoc(wsDoc(ws, "checklists", checklistId));
 }
 
-/* ====================== student_evaluations (미디어×학생, per-uid) ====================== */
-
-export async function saveStudentEvaluation(mediaId, uid, evaluation) {
-  const ref = doc(db, "media_items", mediaId, "student_evaluations", uid);
-  await setDoc(
-    ref,
-    {
-      items: evaluation.items,
-      checklistId: evaluation.checklistId ?? null,
-      dimensionScores: evaluation.dimensionScores ?? null,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
-}
-
-export async function getStudentEvaluation(mediaId, uid) {
-  const ref = doc(db, "media_items", mediaId, "student_evaluations", uid);
-  const snap = await getDoc(ref);
-  return snap.exists() ? snap.data() : null;
-}
-
-/* ====================== algorithm_model (VAPM-4.0, 워크스페이스 스코프) ====================== */
-
-function buildModelDoc(model) {
-  return {
-    version: MODEL_VERSION,
-    standard_basis: STANDARD_BASIS,
-    corrections: model.corrections ?? null,
-    mastery: model.mastery ?? null,
-    checklistId: model.checklistId ?? null,
-    trainingDataCount: model.trainingDataCount ?? 0,
-    trainedAt: serverTimestamp(),
-  };
-}
-
-export async function saveAlgorithmModel(ws, model) {
-  await setDoc(wsDoc(ws, "algorithm_model", "current"), buildModelDoc(model), {
-    merge: true,
-  });
-}
-
-/**
- * 모델을 트랜잭션으로 read-modify-write.
- * 모둠 동시 수용/정교화 시 lost update를 막는다.
- * @param {function(object|null): object} computeNext 현재 모델 데이터를 받아 다음 모델 필드를 반환
- */
-export async function updateAlgorithmModel(ws, computeNext) {
-  const ref = wsDoc(ws, "algorithm_model", "current");
-  return runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref);
-    const current = snap.exists() ? snap.data() : null;
-    const next = computeNext(current);
-    tx.set(ref, buildModelDoc(next), { merge: true });
-    return next;
-  });
-}
-
-/**
- * 레이지 마이그레이션: 3.0(또는 corrections가 없는) 모델 문서를 로드할 때
- * training_data의 modeling 레코드로 corrections·mastery를 재계산해 4.0 스키마로 덮어쓴다.
- * gap 필드가 레코드마다 저장돼 있어 재계산 가능. training_data가 비면 corrections 전부 0.
- * 개인·모둠 워크스페이스 모두 동일 적용. 별도 일괄 마이그레이션 스크립트는 만들지 않는다.
- */
-async function migrateModelToV4(ws, ref, current) {
-  const trSnap = await getDocs(wsCol(ws, "algorithm_model", "current", "training_data"));
-  const records = trSnap.docs.map((d) => d.data());
-  const modeling = records.filter((r) => r.source === "modeling");
-  const corrections = computeCorrections(modeling);
-  const gapHistory = records
-    .map((r) => r.gap)
-    .filter((g) => g && Object.keys(g).length > 0);
-  const mastery = computeMastery(gapHistory);
-  const migrated = {
-    corrections,
-    mastery,
-    checklistId: current?.checklistId ?? null,
-    trainingDataCount: current?.trainingDataCount ?? records.length,
-  };
-  // 전체 덮어쓰기(merge 없음) — weights/convergenceScore 등 옛 필드를 제거한다.
-  await setDoc(ref, buildModelDoc(migrated));
-  return {
-    version: MODEL_VERSION,
-    standard_basis: STANDARD_BASIS,
-    ...migrated,
-  };
-}
-
-export async function getAlgorithmModel(ws) {
-  const ref = wsDoc(ws, "algorithm_model", "current");
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  const current = snap.data();
-  if (current.version === MODEL_VERSION && current.corrections) return current;
-  return migrateModelToV4(ws, ref, current);
-}
-
-export function subscribeAlgorithmModel(ws, cb, onError) {
-  return onSnapshot(
-    wsDoc(ws, "algorithm_model", "current"),
-    (snap) => cb(snap.exists() ? snap.data() : null),
-    onError
-  );
-}
-
-export async function appendTrainingData(ws, dataId, payload) {
-  await setDoc(
-    wsDoc(ws, "algorithm_model", "current", "training_data", dataId),
-    { ...payload, addedAt: serverTimestamp() },
-    { merge: true }
-  );
-}
-
-export async function listTrainingData(ws) {
-  const snap = await getDocs(wsCol(ws, "algorithm_model", "current", "training_data"));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-}
-
-/* ====================== feedback_cards (단일 문서, 쿼터 보호) ======================
- * 과거: 매 학습/수용마다 컬렉션 전체 delete + N개 addDoc (쓰기/삭제 폭풍).
- * 현재: feedback_cards/current 한 문서의 cards 배열을 setDoc 1회로 교체.
- * 카드는 파생/재생성 데이터라 기존 컬렉션 마이그레이션 불필요(다음 학습 시 재생성).
- */
-export async function replaceFeedbackCards(ws, cards) {
-  await setDoc(wsDoc(ws, "feedback_cards", "current"), {
-    cards: Array.isArray(cards) ? cards : [],
-    updatedAt: serverTimestamp(),
-  });
-}
-
-export async function listFeedbackCards(ws) {
-  const snap = await getDoc(wsDoc(ws, "feedback_cards", "current"));
-  if (!snap.exists()) return [];
-  const cards = snap.data().cards;
-  return Array.isArray(cards) ? cards : [];
-}
-
-export function subscribeFeedbackCards(ws, cb, onError) {
-  return onSnapshot(
-    wsDoc(ws, "feedback_cards", "current"),
-    (snap) => {
-      const cards = snap.exists() && Array.isArray(snap.data().cards)
-        ? snap.data().cards
-        : [];
-      cb(cards);
-    },
-    onError
-  );
-}
-
 /* ====================== factcheck_history (워크스페이스 스코프) ====================== */
 
 export async function saveFactCheckHistory(ws, payload) {
@@ -349,31 +263,9 @@ export async function getFactCheckHistory(ws, historyId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export function subscribeFactCheckHistoryDoc(ws, historyId, cb, onError) {
-  return onSnapshot(
-    wsDoc(ws, "factcheck_history", historyId),
-    (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data() } : null),
-    onError
-  );
-}
-
-export async function updateFactCheckHistory(ws, historyId, patch) {
-  await updateDoc(wsDoc(ws, "factcheck_history", historyId), {
-    ...patch,
-    updatedAt: serverTimestamp(),
-  });
-}
-
-/**
- * 팩트체크 결과 1건과 결정적 ID로 묶인 학습 데이터를 함께 정리한다.
- * 모델 가중치(Bayesian 누적)는 되돌리지 않는다 — 정확한 롤백 불가. 마스터리·피드백 카드는
- * 다음 수용/정교화 시 listTrainingData 기반으로 자동 재계산된다.
- */
+// 팩트체크 기록은 v5.0에서 생성·조회·삭제만 한다. 수정 경로(수용/정교화)는 제거되었다.
 export async function deleteFactCheckHistory(ws, historyId) {
   await deleteDoc(wsDoc(ws, "factcheck_history", historyId));
-  await deleteDoc(
-    wsDoc(ws, "algorithm_model", "current", "training_data", `factcheck_${historyId}`)
-  ).catch(() => {});
 }
 
 export async function listFactCheckHistory(ws) {
@@ -402,8 +294,8 @@ export function subscribeFactCheckHistory(ws, cb, opts = {}) {
 }
 
 /* ====================== factcheck_runs (single-flight 조정) ======================
- * 한 미디어에 대한 Gemini 호출을 모둠 전체에서 1회로 제한한다.
- * runKey: 미디어를 식별하는 결정적 키(교사 미디어면 media_{id}, 아니면 본문 해시).
+ * 한 미디어에 대한 Gemini 호출을 모둠 전체에서 1회로 제한한다(무료 쿼터 보호).
+ * runKey: 미디어 + 체크리스트 내용을 식별하는 결정적 키.
  */
 const RUN_STALE_MS = 90_000;
 
@@ -455,17 +347,4 @@ export function subscribeFactCheckRun(ws, runKey, cb, onError) {
     (snap) => cb(snap.exists() ? snap.data() : null),
     onError
   );
-}
-
-/* ====================== utils ====================== */
-
-export async function listTeacherMediaWithTeacherEvals() {
-  const items = await listMediaItems();
-  const enriched = await Promise.all(
-    items.map(async (m) => ({
-      ...m,
-      teacherEvaluation: await getTeacherEvaluation(m.id),
-    }))
-  );
-  return enriched;
 }

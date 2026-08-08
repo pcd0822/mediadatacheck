@@ -6,11 +6,17 @@ import LoginPage from "./pages/LoginPage.jsx";
 import TeacherCodePage from "./pages/TeacherCodePage.jsx";
 import TeacherDashboard from "./pages/teacher/TeacherDashboard.jsx";
 import TeacherMediaUpload from "./pages/teacher/TeacherMediaUpload.jsx";
-import TeacherEvaluation from "./pages/teacher/TeacherEvaluation.jsx";
+import TeacherProgress from "./pages/teacher/TeacherProgress.jsx";
+import TeacherClassStats from "./pages/teacher/TeacherClassStats.jsx";
 import StudentDashboard from "./pages/student/StudentDashboard.jsx";
 import ChecklistEditor from "./pages/student/ChecklistEditor.jsx";
-import ModelingPage from "./pages/student/ModelingPage.jsx";
+import GroupMediaUpload from "./pages/student/GroupMediaUpload.jsx";
 import FactCheckPage from "./pages/student/FactCheckPage.jsx";
+import Stage1Assign from "./pages/student/Stage1Assign.jsx";
+import Stage2Media from "./pages/student/Stage2Media.jsx";
+import Stage3Blind from "./pages/student/Stage3Blind.jsx";
+import Stage4Reveal from "./pages/student/Stage4Reveal.jsx";
+import Stage4Dashboard from "./pages/student/Stage4Dashboard.jsx";
 import ResultPage from "./pages/student/ResultPage.jsx";
 import JoinGroupPage from "./pages/student/JoinGroupPage.jsx";
 
@@ -59,14 +65,21 @@ export default function App() {
         }
       />
       <Route
-        path="/teacher/evaluate/:mediaId"
+        path="/teacher/progress"
         element={
           <ProtectedRoute role="teacher">
-            <TeacherEvaluation />
+            <TeacherProgress />
           </ProtectedRoute>
         }
       />
-
+      <Route
+        path="/teacher/class-stats"
+        element={
+          <ProtectedRoute role="teacher">
+            <TeacherClassStats />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/student"
         element={
@@ -83,11 +96,62 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+      {/* ===== 수업 활동 (순차 게이트, 모둠 작업실 전용) ===== */}
       <Route
-        path="/student/modeling"
+        path="/student/lesson/assign"
         element={
           <ProtectedRoute role="student">
-            <ModelingPage />
+            <Stage1Assign />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/student/lesson/media"
+        element={
+          <ProtectedRoute role="student">
+            <Stage2Media />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/student/lesson/blind"
+        element={
+          <ProtectedRoute role="student">
+            <Stage3Blind />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/student/lesson/reveal"
+        element={
+          <ProtectedRoute role="student">
+            <Stage4Reveal />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/student/lesson/dashboard"
+        element={
+          <ProtectedRoute role="student">
+            <Stage4Dashboard />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* 모둠 자료 등록·수정 (조장 전용 — 페이지 내부에서 leaderUid로 게이트) */}
+      <Route
+        path="/student/group-media"
+        element={
+          <ProtectedRoute role="student">
+            <GroupMediaUpload />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/student/group-media/:mediaId"
+        element={
+          <ProtectedRoute role="student">
+            <GroupMediaUpload />
           </ProtectedRoute>
         }
       />

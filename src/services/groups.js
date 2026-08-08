@@ -15,7 +15,6 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "../firebase.js";
-import { MODEL_VERSION, STANDARD_BASIS } from "../constants/model.js";
 
 /** 모둠 인원 상한 — 리스너 fan-out·동시쓰기를 묶어 무료 쿼터를 보호. */
 export const MAX_GROUP_MEMBERS = 8;
@@ -52,15 +51,19 @@ export async function getGroup(groupId) {
 }
 
 /**
- * 모둠 생성. 조장의 기존 체크리스트(+모델·피드백)를 작업실로 복사한다.
+ * 모둠 생성. 조장의 기존 체크리스트를 모둠 작업실로 복사한다.
  * Firestore 규칙상 하위 데이터 쓰기는 멤버여야 하므로
- *   group 생성 → 조장 멤버십 생성 → 체크리스트/모델 복사 → group.checklistId 갱신 → user.groups 기록
+ *   group 생성 → 조장 멤버십 생성 → 체크리스트 복사 → group.checklistId 갱신 → user.groups 기록
  * 순서로 진행한다.
+ *
+ * v5.0에서 algorithm_model·feedback_cards 시드는 사라졌다.
+ * 점수 산출 근거가 체크리스트 하나로 단일화되어 복사할 학습 상태가 없기 때문.
+ *
  * @param {{uid,name,email}} leader
- * @param {{groupName, sourceChecklist, sourceModel, sourceFeedbackCards}} opts
+ * @param {{groupName, sourceChecklist}} opts
  * @returns {Promise<{groupId, shareCode}>}
  */
-export async function createGroup(leader, { groupName, sourceChecklist, sourceModel, sourceFeedbackCards }) {
+export async function createGroup(leader, { groupName, sourceChecklist }) {
   const shareCode = generateShareCode();
 
   // 1) group 문서 (checklistId는 복사 후 채움)
@@ -94,35 +97,14 @@ export async function createGroup(leader, { groupName, sourceChecklist, sourceMo
   });
   const checklistId = checklistRef.id;
 
-  // 4) 모델 시드 (있으면 조장 모델 복사, training_data는 새로 시작)
-  if (sourceModel) {
-    await setDoc(doc(db, "groups", groupId, "algorithm_model", "current"), {
-      version: MODEL_VERSION,
-      standard_basis: STANDARD_BASIS,
-      corrections: sourceModel.corrections ?? null,
-      mastery: sourceModel.mastery ?? null,
-      checklistId,
-      trainingDataCount: sourceModel.trainingDataCount ?? 0,
-      trainedAt: serverTimestamp(),
-    });
-  }
-
-  // 5) 피드백 카드 복사 (표시 연속성)
-  if (Array.isArray(sourceFeedbackCards) && sourceFeedbackCards.length) {
-    await setDoc(doc(db, "groups", groupId, "feedback_cards", "current"), {
-      cards: sourceFeedbackCards,
-      updatedAt: serverTimestamp(),
-    });
-  }
-
-  // 6) group.checklistId 활성 포인터
+  // 4) group.checklistId 활성 포인터
   await updateDoc(doc(db, "groups", groupId), {
     checklistId,
     leaderUid: leader.uid, // update 규칙의 leaderUid 불변 검증 통과용(동일값)
     updatedAt: serverTimestamp(),
   });
 
-  // 7) 조장 본인 프로필에 소속 기록
+  // 5) 조장 본인 프로필에 소속 기록
   await updateDoc(doc(db, "users", leader.uid), {
     [`groups.${groupId}`]: {
       role: "leader",

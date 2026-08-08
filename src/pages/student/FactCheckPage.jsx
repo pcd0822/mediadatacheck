@@ -9,26 +9,26 @@ import {
   claimFactCheckRun,
   completeFactCheckRun,
   failFactCheckRun,
-  getAlgorithmModel,
   getChecklist,
   listChecklists,
-  listMediaItems,
+  listGroupMediaItems,
+  listTeacherMediaItems,
+  mediaImageUrl,
   saveFactCheckHistory,
   subscribeFactCheckHistory,
   subscribeFactCheckRun,
 } from "../../services/firestore.js";
-import { evaluateMediaDimensions } from "../../services/gemini.js";
+import { evaluateMediaByChecklist } from "../../services/gemini.js";
 import { uploadFactCheckImage } from "../../services/storage.js";
 import { cached } from "../../utils/dataCache.js";
 import { MODEL_VERSION, STANDARD_BASIS } from "../../constants/model.js";
 import {
-  DIMENSIONS,
-  applyCorrections,
-  computeFinalScore,
-  countAppliedCorrections,
+  aggregateItemsToDimensions,
+  computeChecklistScore,
+  normalizeItemResults,
 } from "../../utils/hpfm.js";
 
-// 같은 입력(미디어)에 대한 모둠 내 중복 Gemini 호출을 막기 위한 결정적 키.
+// 같은 입력(미디어 + 체크리스트 내용)에 대한 모둠 내 중복 Gemini 호출을 막기 위한 결정적 키.
 function hashStr(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i += 1) h = (((h << 5) + h) + s.charCodeAt(i)) | 0;
@@ -38,12 +38,36 @@ function lastChecklistStorageKey(uid, ws) {
   return `mdc:fc:lastChecklist:${uid}:${ws.type}:${ws.id}`;
 }
 
-function factcheckRunKey(form, imageUrl, checklistId) {
-  const norm = [form.title, form.content, form.link, imageUrl, checklistId]
+/**
+ * 채점 결과는 "미디어 × 체크리스트 항목 내용"으로 결정되므로 runKey에 질문 텍스트까지 넣는다.
+ * (체크리스트 id만 쓰면 항목을 수정한 뒤에도 옛 결과가 재사용된다)
+ */
+function factcheckRunKey(form, imageUrl, checklistId, items) {
+  const questions = (items ?? []).map((it) => (it?.question ?? "").trim()).join("¶");
+  const norm = [
+    form.title,
+    form.subtitle,
+    form.content,
+    form.publisher,
+    form.publishedAt,
+    form.link,
+    imageUrl,
+    checklistId,
+    questions,
+  ]
     .map((x) => (x ?? "").trim())
-    .join("");
+    .join("");
   return `fc_${hashStr(norm)}`;
 }
+
+const EMPTY_FORM = {
+  title: "",
+  subtitle: "",
+  content: "",
+  publisher: "",
+  publishedAt: "",
+  link: "",
+};
 
 export default function FactCheckPage() {
   const { user } = useAuth();
@@ -53,34 +77,43 @@ export default function FactCheckPage() {
   const requestedChecklistId = searchParams.get("checklist");
   const [checklists, setChecklists] = useState([]);
   const [activeChecklistId, setActiveChecklistId] = useState(null);
-  const [model, setModel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [waiting, setWaiting] = useState(null); // {by} — 다른 모둠원이 실행 중
   const [activeRunKey, setActiveRunKey] = useState(null);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ title: "", content: "", link: "" });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
-  const [teacherImageUrl, setTeacherImageUrl] = useState("");
-  const [imageSource, setImageSource] = useState(null); // "teacher" | "history" | null
+  const [pickedImageUrl, setPickedImageUrl] = useState("");
+  const [imageSource, setImageSource] = useState(null); // "library" | "history" | null
+  const [sourceMediaId, setSourceMediaId] = useState(null);
   const [history, setHistory] = useState([]);
   const [teacherMedia, setTeacherMedia] = useState([]);
+  const [groupMedia, setGroupMedia] = useState([]);
   const [showLoadModal, setShowLoadModal] = useState(false);
 
-  // 체크리스트/모델/교사 미디어 로드 (교사 미디어는 세션 캐시)
+  const activeChecklist = useMemo(
+    () => checklists.find((c) => c.id === activeChecklistId) ?? null,
+    [checklists, activeChecklistId]
+  );
+
+  // 체크리스트 + 사용 가능한 미디어 자료 로드 (자료 목록은 세션 캐시)
   useEffect(() => {
     if (!ws) return;
     setLoading(true);
     (async () => {
-      const [cls, m, tm] = await Promise.all([
+      const [cls, tm, gm] = await Promise.all([
         listChecklists(ws),
-        getAlgorithmModel(ws),
-        cached("mediaItems", () => listMediaItems()),
+        cached("media:teacher", () => listTeacherMediaItems()),
+        // 모둠 자료는 그 모둠만 읽을 수 있으므로 모둠 작업실일 때만 조회한다.
+        isGroup
+          ? cached(`media:group:${ws.id}`, () => listGroupMediaItems(ws.id))
+          : Promise.resolve([]),
       ]);
       setChecklists(cls);
-      setModel(m);
       setTeacherMedia(tm);
+      setGroupMedia(gm);
       const fromUrl =
         requestedChecklistId && cls.find((c) => c.id === requestedChecklistId)
           ? requestedChecklistId
@@ -93,13 +126,7 @@ export default function FactCheckPage() {
       } catch {
         // localStorage 접근 불가(프라이빗 모드 등) — 무시.
       }
-      const initial =
-        fromUrl ??
-        storedId ??
-        (m?.checklistId && cls.find((c) => c.id === m.checklistId)
-          ? m.checklistId
-          : cls[0]?.id ?? null);
-      setActiveChecklistId(initial);
+      setActiveChecklistId(fromUrl ?? storedId ?? cls[0]?.id ?? null);
       if (fromUrl) {
         // 한 번 반영했으면 URL은 정리 — 사이드바·체크리스트 변경에 다시 끌려가지 않도록.
         const next = new URLSearchParams(searchParams);
@@ -115,10 +142,7 @@ export default function FactCheckPage() {
   useEffect(() => {
     if (!activeChecklistId || !ws || !user?.uid) return;
     try {
-      localStorage.setItem(
-        lastChecklistStorageKey(user.uid, ws),
-        activeChecklistId
-      );
+      localStorage.setItem(lastChecklistStorageKey(user.uid, ws), activeChecklistId);
     } catch {
       // 무시
     }
@@ -173,7 +197,7 @@ export default function FactCheckPage() {
     }
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
-    setTeacherImageUrl("");
+    setPickedImageUrl("");
     setImageSource(null);
     setError("");
   };
@@ -181,21 +205,28 @@ export default function FactCheckPage() {
   const handleRemoveImage = () => {
     setImageFile(null);
     setImagePreview("");
-    setTeacherImageUrl("");
+    setPickedImageUrl("");
     setImageSource(null);
   };
 
   const handleResetForm = () => {
-    setForm({ title: "", content: "", link: "" });
+    setForm(EMPTY_FORM);
     setImageFile(null);
     setImagePreview("");
-    setTeacherImageUrl("");
+    setPickedImageUrl("");
     setImageSource(null);
+    setSourceMediaId(null);
     setError("");
   };
 
   const hasFormData = !!(
-    form.title || form.content || form.link || imagePreview || imageFile
+    form.title ||
+    form.content ||
+    form.link ||
+    form.publisher ||
+    form.subtitle ||
+    imagePreview ||
+    imageFile
   );
 
   // 현재 활성 체크리스트로 검증된 카드만 노출 — 체크리스트 버전별로 결과 카드를 분리한다.
@@ -205,7 +236,6 @@ export default function FactCheckPage() {
   );
 
   // 모달 후보: 활성 체크리스트가 아닌 다른 체크리스트로 검증된 미디어(중복 제거).
-  // 사용자가 새 체크리스트로 재검증할 수 있도록 미디어 원본 정보를 폼에 채워 넣는다.
   const loadableHistory = useMemo(() => {
     const seen = new Set();
     const out = [];
@@ -227,13 +257,17 @@ export default function FactCheckPage() {
     const m = item.media ?? {};
     setForm({
       title: m.title ?? "",
+      subtitle: m.subtitle ?? "",
       content: m.content ?? "",
+      publisher: m.publisher ?? "",
+      publishedAt: m.publishedAt ?? "",
       link: m.link ?? "",
     });
     setImageFile(null);
     setImagePreview(m.imageUrl ?? "");
-    setTeacherImageUrl(m.imageUrl ?? "");
+    setPickedImageUrl(m.imageUrl ?? "");
     setImageSource(m.imageUrl ? "history" : null);
+    setSourceMediaId(m.mediaItemId ?? null);
     setError("");
     setShowLoadModal(false);
     if (typeof window !== "undefined") {
@@ -241,16 +275,21 @@ export default function FactCheckPage() {
     }
   };
 
-  const fillFromTeacher = (m) => {
+  const fillFromLibrary = (m) => {
+    const img = mediaImageUrl(m);
     setForm({
       title: m.title ?? "",
+      subtitle: m.subtitle ?? "",
       content: m.content ?? "",
+      publisher: m.publisher ?? "",
+      publishedAt: m.publishedAt ?? "",
       link: m.link ?? "",
     });
+    setSourceMediaId(m.id ?? null);
     if (!imageFile) {
-      setTeacherImageUrl(m.thumbnailUrl ?? "");
-      setImagePreview(m.thumbnailUrl ?? "");
-      setImageSource(m.thumbnailUrl ? "teacher" : null);
+      setPickedImageUrl(img);
+      setImagePreview(img);
+      setImageSource(img ? "library" : null);
     }
     setError("");
     if (typeof window !== "undefined") {
@@ -258,65 +297,42 @@ export default function FactCheckPage() {
     }
   };
 
-  // Gemini 평가 → 점수 환산 → factcheck_history 저장. historyId 반환.
+  /**
+   * Gemini 항목별 채점 → 원점수·백분율 환산 → factcheck_history 저장. historyId 반환.
+   * 교사 채점·보정은 어디에도 개입하지 않는다. 근거는 체크리스트 하나뿐이다.
+   */
   const executeFactCheck = async ({ checklist, imageUrl }) => {
-    const dimsResult = await evaluateMediaDimensions({ ...form, imageUrl });
-    const dimensionScores = {};
-    const dimensionReasons = {};
-    const dimensionRedFlags = {};
-    const dimensionSkipped = {};
-    const fallbacks = [];
-    for (const d of DIMENSIONS) {
-      const entry = dimsResult[d] ?? {};
-      if (entry.skipped === true || entry.score === null) {
-        dimensionScores[d] = null;
-        dimensionSkipped[d] = true;
-      } else {
-        const raw = Number(entry.score);
-        if (Number.isFinite(raw)) {
-          dimensionScores[d] = Math.max(1, Math.min(5, Math.round(raw)));
-        } else {
-          dimensionScores[d] = 3;
-          fallbacks.push(d);
-        }
-      }
-      dimensionReasons[d] = entry.reason ?? "";
-      if (Array.isArray(entry.redFlags) && entry.redFlags.length) {
-        dimensionRedFlags[d] = entry.redFlags;
-      }
-    }
-    const usableCount = DIMENSIONS.filter(
-      (d) => Number.isFinite(dimensionScores[d]) && !fallbacks.includes(d)
-    ).length;
-    if (usableCount === 0) {
+    const items = checklist.items ?? [];
+    const aiResults = await evaluateMediaByChecklist({ ...form, imageUrl }, items);
+    const itemResults = normalizeItemResults(items, aiResults);
+    const score = computeChecklistScore(itemResults);
+
+    if (score.scoredCount === 0) {
       throw new Error(
-        "AI 평가 결과를 읽지 못했어요. 본문이 너무 짧거나 일시적인 오류일 수 있어요. 본문을 좀 더 길게 입력하거나 잠시 후 다시 시도해주세요."
+        "AI가 모든 항목을 판단하지 못했어요. 본문이 너무 짧거나 일시적인 오류일 수 있어요. 본문을 좀 더 길게 입력하거나 잠시 후 다시 시도해주세요."
       );
     }
 
-    // 보정 적용: AI 원점수 → 교사 기준 보정 → 50점 환산·등급·과락.
-    // AI 원점수(dimensionScores)는 보정 전 값 그대로 저장하고, 보정 후 값(correctedDimensionScores)을
-    // 함께 남겨 결과 화면에서 "보정 전 → 후"를 보여준다.
-    const corrections = model?.corrections ?? null;
-    const correctedDimensionScores = applyCorrections(dimensionScores, corrections);
-    const { total, band, dimensionAlert, alertDimensions } =
-      computeFinalScore(correctedDimensionScores);
-
     return saveFactCheckHistory(ws, {
-      media: { ...form, imageUrl: imageUrl || "" },
+      media: {
+        ...form,
+        imageUrl: imageUrl || "",
+        mediaItemId: sourceMediaId ?? null,
+      },
       checklistId: activeChecklistId,
-      checklistSnapshot: checklist.items,
-      dimensionScores,
-      dimensionReasons,
-      dimensionRedFlags,
-      dimensionSkipped,
-      correctionsSnapshot: corrections,
-      correctedDimensionScores,
-      totalScore: total,
-      band,
-      dimensionAlert,
-      alertDimensions,
-      accepted: false,
+      checklistName: checklist.checklistName ?? null,
+      checklistSnapshot: items,
+      itemResults,
+      rawScore: score.rawScore,
+      maxScore: score.maxScore,
+      percent: score.percent,
+      band: score.band,
+      itemAlert: score.itemAlert,
+      alertIndexes: score.alertIndexes,
+      naCount: score.naCount,
+      scoredCount: score.scoredCount,
+      // 5대 검증 행동 평균 — 점수 계산과 무관한 분석·비교용 표시값.
+      dimensionAverages: aggregateItemsToDimensions(itemResults),
       createdByUid: user.uid,
       createdByName: user.displayName ?? null,
       version: MODEL_VERSION,
@@ -328,19 +344,27 @@ export default function FactCheckPage() {
     setError("");
     if (!activeChecklistId) return setError("체크리스트를 먼저 선택해주세요.");
     if (!form.title.trim() || !form.content.trim()) {
-      return setError("미디어 제목과 본문을 입력해주세요.");
+      return setError("미디어 표제와 본문을 입력해주세요.");
     }
     setRunning(true);
     try {
       const checklist = await getChecklist(ws, activeChecklistId);
       if (!checklist) throw new Error("체크리스트를 찾을 수 없습니다.");
+      if (!checklist.items?.length) {
+        throw new Error("체크리스트에 항목이 없어요. 먼저 평가 질문을 만들어주세요.");
+      }
 
-      let imageUrl = teacherImageUrl;
+      let imageUrl = pickedImageUrl;
       if (imageFile) imageUrl = await uploadFactCheckImage(imageFile, user.uid);
 
       if (isGroup) {
-        // single-flight: 같은 미디어는 모둠 전체에서 1회만 Gemini 호출
-        const runKey = factcheckRunKey(form, imageUrl, activeChecklistId);
+        // single-flight: 같은 미디어+체크리스트는 모둠 전체에서 1회만 Gemini 호출
+        const runKey = factcheckRunKey(
+          form,
+          imageUrl,
+          activeChecklistId,
+          checklist.items
+        );
         const decision = await claimFactCheckRun(ws, runKey, {
           uid: user.uid,
           name: user.displayName ?? null,
@@ -350,13 +374,11 @@ export default function FactCheckPage() {
           return;
         }
         if (decision.role === "wait") {
-          // 다른 모둠원이 실행 중 — 완료되면 구독 effect가 이동시킴
           setWaiting({ by: decision.claimedByName });
           setActiveRunKey(runKey);
           setRunning(false);
           return;
         }
-        // role === "run": 내가 실행자
         try {
           const historyId = await executeFactCheck({ checklist, imageUrl });
           await completeFactCheckRun(ws, runKey, historyId);
@@ -394,24 +416,32 @@ export default function FactCheckPage() {
     );
   }
 
-  // 모든 검증 행동의 보정 건수가 부족하면(항목별 3건 미만) 보정 없이 AI 점수 그대로 계산.
-  const noCalibration = countAppliedCorrections(model?.corrections) === 0;
   const busy = running || !!waiting;
+  const itemCount = activeChecklist?.items?.length ?? 0;
 
   return (
     <Layout
       title="미디어 팩트체크"
       subtitle={
         isGroup
-          ? `모둠 작업실 · ${ws?.name ?? "우리 모둠"} — 같은 미디어는 모둠에서 한 번만 AI 호출해요`
-          : "AI가 5대 검증 행동(출처·저자·콘텐츠·이미지·감정)으로 미디어를 1~5점으로 평가하고, 교사 기준 보정을 적용해 50점 만점으로 보여줘요"
+          ? `모둠 작업실 · ${ws?.name ?? "우리 모둠"} — 같은 자료는 모둠에서 한 번만 AI를 호출해요`
+          : "AI가 내 체크리스트 항목을 하나씩 적용해 1~5점을 매기고, 항목 점수를 합산해 보여줘요"
       }
-      actions={<Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>}
+      actions={
+        <>
+          <Button variant="secondary" onClick={() => navigate("/student")}>← 대시보드</Button>
+          {isGroup && (
+            <Button variant="secondary" onClick={() => navigate("/student/group-media")}>
+              모둠 자료 등록
+            </Button>
+          )}
+        </>
+      }
     >
       <div className="card grid gap-5">
         <div>
           <div className="mb-1 flex items-center justify-between gap-2">
-            <label className="label mb-0" htmlFor="fc-checklist">사용 체크리스트</label>
+            <label className="label mb-0" htmlFor="fc-checklist">채점 기준 체크리스트</label>
             <div className="flex items-center gap-1">
               {hasFormData && (
                 <Button
@@ -443,22 +473,69 @@ export default function FactCheckPage() {
             onChange={(e) => setActiveChecklistId(e.target.value)}
           >
             {checklists.map((c) => (
-              <option key={c.id} value={c.id}>{c.checklistName}</option>
+              <option key={c.id} value={c.id}>
+                {c.checklistName} (항목 {c.items?.length ?? 0}개)
+              </option>
             ))}
           </select>
-          {noCalibration && (
-            <p className="mt-2 text-xs text-amber-700">
-              ※ 아직 기준 다듬기 데이터가 적어 보정 없이 AI 점수를 그대로 계산했어요(항목별 3건 이상 필요). "기준 다듬기"를 더 진행하면 {isGroup ? "모둠" : "너"}와 교사의 점수 차이가 보정값으로 반영됩니다.
-            </p>
-          )}
+          <p className="mt-2 text-xs text-slate-500">
+            AI가 이 체크리스트의 <strong>{itemCount}개 항목</strong>을 하나씩 적용해 채점해요.
+            만점은 <strong>{itemCount * 5}점</strong>(항목당 5점)이 되고, 판단 단서가 없는 항목은
+            점수 대신 N/A로 표시되며 만점에서도 빠져요.
+          </p>
+          <p className="mt-1 text-xs text-amber-700">
+            ※ 모둠마다 문항 수가 달라 <strong>원점수만으로는 모둠 간 비교가 되지 않아요.</strong>{" "}
+            모둠끼리 견줄 때는 백분율(%)을 보세요.
+          </p>
         </div>
 
-        <div>
-          <label className="label">미디어 제목 *</label>
-          <input className="input" value={form.title} onChange={onChange("title")} placeholder="예) 새로운 다이어트 식품 효과 보도" />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label className="label">표제 *</label>
+            <input
+              className="input"
+              value={form.title}
+              onChange={onChange("title")}
+              placeholder="예) 새로운 다이어트 식품 효과 보도"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label">부제</label>
+            <input
+              className="input"
+              value={form.subtitle}
+              onChange={onChange("subtitle")}
+              placeholder="예) 제목 아래 작은 제목"
+            />
+          </div>
+          <div>
+            <label className="label">언론사</label>
+            <input
+              className="input"
+              value={form.publisher}
+              onChange={onChange("publisher")}
+              placeholder="예) ○○일보"
+            />
+          </div>
+          <div>
+            <label className="label">작성일</label>
+            <input
+              type="date"
+              className="input"
+              value={form.publishedAt}
+              onChange={onChange("publishedAt")}
+            />
+          </div>
         </div>
+
+        <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+          ⚠️ AI는 여기 입력한 <strong>언론사·작성일·링크를 검증 없이 사실로 전제하고</strong> 채점해요.
+          그 매체가 실제로 있는지, 날짜가 맞는지는 확인하지 못합니다. 일부러 없는 언론사 이름을
+          넣어보고 결과가 어떻게 달라지는지 살펴보는 것도 좋은 실험이에요.
+        </p>
+
         <div>
-          <label className="label">본문 내용 *</label>
+          <label className="label">본문 *</label>
           <textarea
             className="input min-h-[200px] resize-y"
             value={form.content}
@@ -468,14 +545,20 @@ export default function FactCheckPage() {
         </div>
         <div>
           <label className="label">원본 링크</label>
-          <input type="url" className="input" value={form.link} onChange={onChange("link")} placeholder="https://..." />
+          <input
+            type="url"
+            className="input"
+            value={form.link}
+            onChange={onChange("link")}
+            placeholder="https://..."
+          />
         </div>
 
         <div>
-          <label className="label">첨부 이미지 (선택)</label>
+          <label className="label">이미지 (선택)</label>
           <p className="mb-2 text-[11px] text-slate-500">
-            기사·게시물에 포함된 사진·스크린샷·그래프를 첨부하면 AI가 V4(이미지·영상 확인)에서
-            실제 이미지를 분석해 점수를 매겨요. 첨부하지 않으면 V4는 본문 언급 여부로 판단합니다.
+            자료에 포함된 사진·스크린샷·그래프를 첨부하면, 시각 자료를 묻는 체크리스트 항목을
+            AI가 이미지를 직접 보고 채점해요. 첨부하지 않으면 그런 항목은 N/A로 빠질 수 있어요.
           </p>
           <input type="file" accept="image/*" onChange={onImageFile} />
           {imagePreview && (
@@ -491,8 +574,8 @@ export default function FactCheckPage() {
                   <p className="text-xs text-slate-500">
                     {imageFile.name} · {(imageFile.size / 1024 / 1024).toFixed(2)}MB
                   </p>
-                ) : imageSource === "teacher" ? (
-                  <p className="text-xs text-slate-500">선생님 자료의 이미지를 가져왔어요</p>
+                ) : imageSource === "library" ? (
+                  <p className="text-xs text-slate-500">등록된 자료의 이미지를 가져왔어요</p>
                 ) : imageSource === "history" ? (
                   <p className="text-xs text-slate-500">기존 자료에서 가져온 이미지예요</p>
                 ) : null}
@@ -507,52 +590,42 @@ export default function FactCheckPage() {
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
 
         <div className="flex justify-end">
-          <Button variant="primary" onClick={handleRun} loading={busy} disabled={busy}>팩트체크 실행</Button>
+          <Button variant="primary" onClick={handleRun} loading={busy} disabled={busy}>
+            팩트체크 실행
+          </Button>
         </div>
       </div>
 
-      <section className="mt-8">
-        <div className="mb-3 flex items-end justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">선생님이 올린 미디어</h2>
-            <p className="text-xs text-slate-500">
-              카드를 클릭하면 위 폼에 자동으로 채워져요. 그대로 팩트체크를 실행해보세요.
-            </p>
-          </div>
-          {teacherMedia.length > 0 && (
-            <span className="badge bg-brand-50 text-brand-700">
-              총 {teacherMedia.length}건
-            </span>
-          )}
-        </div>
+      <MediaLibrarySection
+        title="선생님이 올린 공통 자료"
+        hint="학급 전체가 함께 평가하는 필수 자료예요. 카드를 클릭하면 위 폼에 자동으로 채워져요."
+        items={teacherMedia}
+        emptyText="아직 선생님이 올린 자료가 없어요."
+        badgeText="공통 필수"
+        badgeClass="bg-emerald-50 text-emerald-700"
+        onPick={fillFromLibrary}
+      />
 
-        {teacherMedia.length === 0 ? (
-          <div className="card text-center text-sm text-slate-500">
-            아직 선생님이 올린 미디어가 없어요.
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {teacherMedia.map((m) => (
-              <TeacherMediaCard
-                key={m.id}
-                item={m}
-                onClick={() => fillFromTeacher(m)}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      {isGroup && (
+        <MediaLibrarySection
+          title="우리 모둠이 등록한 자료"
+          hint="조장이 등록한 자료예요. 우리 모둠만 볼 수 있어요."
+          items={groupMedia}
+          emptyText="아직 우리 모둠이 등록한 자료가 없어요. 조장이 '모둠 자료 등록'에서 추가할 수 있어요."
+          badgeText="모둠 자료"
+          badgeClass="bg-brand-50 text-brand-700"
+          onPick={fillFromLibrary}
+        />
+      )}
 
       <section className="mt-8">
         <div className="mb-3 flex items-end justify-between">
           <div>
             <h2 className="text-lg font-bold text-slate-900">
-              {isGroup ? "우리 모둠 팩트체크" : "내가 등록한 미디어"}
+              {isGroup ? "우리 모둠 팩트체크 결과" : "내 팩트체크 결과"}
             </h2>
             <p className="text-xs text-slate-500">
-              {isGroup
-                ? "지금 선택한 체크리스트로 검증한 결과만 보여줘요. 체크리스트를 바꾸면 그 버전의 결과가 표시돼요."
-                : "지금 선택한 체크리스트로 검증한 결과만 보여줘요. 체크리스트를 바꾸면 그 버전의 결과가 표시돼요."}
+              지금 선택한 체크리스트로 검증한 결과만 보여줘요. 체크리스트를 바꾸면 그 버전의 결과가 표시돼요.
             </p>
           </div>
           {visibleHistory.length > 0 && (
@@ -563,7 +636,7 @@ export default function FactCheckPage() {
         {visibleHistory.length === 0 ? (
           <div className="card text-center text-sm text-slate-500">
             {history.length === 0
-              ? "아직 등록한 미디어가 없습니다. 위 양식에서 첫 팩트체크를 시작해보세요."
+              ? "아직 검증한 자료가 없습니다. 위 양식에서 첫 팩트체크를 시작해보세요."
               : "이 체크리스트로 검증한 자료가 아직 없어요. 다른 체크리스트로 검증했던 자료를 가져오려면 위 '+ 기존 자료 불러오기'를 눌러보세요."}
           </div>
         ) : (
@@ -580,10 +653,12 @@ export default function FactCheckPage() {
         )}
       </section>
 
-      {running && <LoadingOverlay message="AI 친구가 5대 검증 행동으로 미디어를 살펴보고 있어요..." />}
+      {running && (
+        <LoadingOverlay message="AI 친구가 우리 체크리스트로 자료를 한 항목씩 살펴보고 있어요..." />
+      )}
       {waiting && (
         <LoadingOverlay
-          message={`${waiting.by ?? "모둠원"}이(가) 같은 미디어를 팩트체크하고 있어요. 결과를 함께 받는 중...`}
+          message={`${waiting.by ?? "모둠원"}이(가) 같은 자료를 팩트체크하고 있어요. 결과를 함께 받는 중...`}
         />
       )}
 
@@ -598,34 +673,82 @@ export default function FactCheckPage() {
   );
 }
 
-function TeacherMediaCard({ item, onClick }) {
+function MediaLibrarySection({
+  title,
+  hint,
+  items,
+  emptyText,
+  badgeText,
+  badgeClass,
+  onPick,
+}) {
+  return (
+    <section className="mt-8">
+      <div className="mb-3 flex items-end justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+          <p className="text-xs text-slate-500">{hint}</p>
+        </div>
+        {items.length > 0 && (
+          <span className={`badge ${badgeClass}`}>총 {items.length}건</span>
+        )}
+      </div>
+
+      {items.length === 0 ? (
+        <div className="card text-center text-sm text-slate-500">{emptyText}</div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {items.map((m) => (
+            <MediaCard
+              key={m.id}
+              item={m}
+              badgeText={badgeText}
+              badgeClass={badgeClass}
+              onClick={() => onPick(m)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MediaCard({ item, badgeText, badgeClass, onClick }) {
+  const img = mediaImageUrl(item);
   return (
     <button
       type="button"
       onClick={onClick}
       className="group card flex h-full flex-col gap-3 overflow-hidden p-0 text-left transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
     >
-      {item.thumbnailUrl ? (
+      {img ? (
         <img
-          src={item.thumbnailUrl}
+          src={img}
           alt=""
           className="w-full bg-slate-50 object-contain"
           style={{ maxHeight: "1080px" }}
         />
       ) : (
         <div className="grid h-56 w-full place-items-center bg-slate-100 text-xs text-slate-400">
-          썸네일 없음
+          이미지 없음
         </div>
       )}
       <div className="flex flex-1 flex-col gap-2 p-4 pt-2">
         <h3 className="line-clamp-2 text-sm font-bold text-slate-900 group-hover:text-brand-700">
-          {item.title || "(제목 없음)"}
+          {item.title || "(표제 없음)"}
         </h3>
-        <p className="line-clamp-3 text-xs leading-5 text-slate-600">
-          {item.content || ""}
+        {item.subtitle && (
+          <p className="line-clamp-1 text-xs text-slate-500">{item.subtitle}</p>
+        )}
+        <p className="flex flex-wrap gap-x-2 text-[11px] text-slate-400">
+          {item.publisher && <span>{item.publisher}</span>}
+          {item.publishedAt && <span>{item.publishedAt}</span>}
         </p>
+        <p className="line-clamp-3 text-xs leading-5 text-slate-600">{item.content || ""}</p>
         <div className="mt-auto flex items-center justify-between text-[11px] text-slate-400">
-          <span>선생님 자료</span>
+          <span className={`rounded-full px-2 py-0.5 font-semibold ${badgeClass}`}>
+            {badgeText}
+          </span>
           <span className="font-semibold text-brand-600 group-hover:underline">
             폼에 가져오기 →
           </span>
@@ -636,14 +759,12 @@ function TeacherMediaCard({ item, onClick }) {
 }
 
 function HistoryCard({ item, onClick, showAuthor }) {
-  const score = Number(item.finalTotalScore ?? item.totalScore ?? 0);
   const created = item.createdAt?.toDate?.() ?? null;
-  const hasAlert = item.dimensionAlert === true;
-  const status = item.refined
-    ? { label: "정교화됨", cls: "bg-amber-50 text-amber-700" }
-    : item.accepted
-    ? { label: "수용됨", cls: "bg-emerald-50 text-emerald-700" }
-    : { label: "미반영", cls: "bg-slate-100 text-slate-600" };
+  const isLegacy = !Array.isArray(item.itemResults);
+  const raw = Number(item.rawScore ?? 0);
+  const max = Number(item.maxScore ?? 0);
+  const percent = Number(item.percent ?? 0);
+  const hasAlert = item.itemAlert === true || item.dimensionAlert === true;
 
   return (
     <button
@@ -653,11 +774,13 @@ function HistoryCard({ item, onClick, showAuthor }) {
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="line-clamp-2 text-sm font-bold text-slate-900 group-hover:text-brand-700">
-          {item.media?.title || "(제목 없음)"}
+          {item.media?.title || "(표제 없음)"}
         </h3>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${status.cls}`}>
-          {status.label}
-        </span>
+        {isLegacy && (
+          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+            이전 버전
+          </span>
+        )}
       </div>
 
       <p className="line-clamp-3 text-xs leading-5 text-slate-600">
@@ -670,13 +793,24 @@ function HistoryCard({ item, onClick, showAuthor }) {
 
       <div className="mt-auto flex items-end justify-between gap-2 border-t border-slate-100 pt-3">
         <div>
-          <p className="text-[10px] text-slate-400">최종 점수</p>
-          <p className="text-2xl font-extrabold text-brand-700">
-            {score.toFixed(1)}<span className="text-xs text-slate-400">/50</span>
+          <p className="text-[10px] text-slate-400">
+            {isLegacy ? "이전 버전 총점" : "원점수"}
           </p>
-          {hasAlert && (
-            <p className="text-[10px] font-semibold text-rose-600">⚠️ 항목 경고</p>
+          {isLegacy ? (
+            <p className="text-2xl font-extrabold text-slate-500">
+              {Number(item.finalTotalScore ?? item.totalScore ?? 0).toFixed(1)}
+              <span className="text-xs text-slate-400">/50</span>
+            </p>
+          ) : (
+            <>
+              <p className="text-2xl font-extrabold text-brand-700">
+                {raw}
+                <span className="text-xs text-slate-400">/{max}</span>
+              </p>
+              <p className="text-[11px] font-semibold text-brand-600">{percent}%</p>
+            </>
           )}
+          {hasAlert && <p className="text-[10px] font-semibold text-rose-600">⚠️ 항목 경고</p>}
         </div>
         <div className="text-right">
           {created && (
@@ -684,9 +818,7 @@ function HistoryCard({ item, onClick, showAuthor }) {
               {created.toLocaleDateString("ko-KR", { month: "short", day: "numeric" })}
             </p>
           )}
-          {item.media?.link && (
-            <span className="text-[10px] text-brand-600">원본 링크 ✓</span>
-          )}
+          {item.media?.link && <span className="text-[10px] text-brand-600">원본 링크 ✓</span>}
         </div>
       </div>
     </button>
@@ -707,7 +839,8 @@ function LoadHistoryModal({ items, onPick, onClose }) {
           <div>
             <h3 className="font-display text-lg font-bold text-slate-900">기존 자료 불러오기</h3>
             <p className="mt-1 text-xs text-slate-500">
-              다른 체크리스트로 검증했던 미디어예요. 불러오면 제목·원본 링크·첨부 이미지·본문이 폼에 채워지고, 지금 선택한 체크리스트로 다시 팩트체크할 수 있어요.
+              다른 체크리스트로 검증했던 미디어예요. 불러오면 표제·부제·언론사·작성일·본문·이미지가
+              폼에 채워지고, 지금 선택한 체크리스트로 다시 팩트체크할 수 있어요.
             </p>
           </div>
           <button
@@ -730,7 +863,7 @@ function LoadHistoryModal({ items, onPick, onClose }) {
               <thead className="sticky top-0 bg-slate-50 text-xs text-slate-500">
                 <tr>
                   <th className="w-12 px-3 py-2 text-left font-semibold">연번</th>
-                  <th className="px-3 py-2 text-left font-semibold">미디어 제목</th>
+                  <th className="px-3 py-2 text-left font-semibold">미디어 표제</th>
                   <th className="w-28 px-3 py-2 text-right font-semibold">불러오기</th>
                 </tr>
               </thead>
@@ -740,7 +873,7 @@ function LoadHistoryModal({ items, onPick, onClose }) {
                     <td className="px-3 py-2 text-slate-500">{idx + 1}</td>
                     <td className="px-3 py-2 text-slate-800">
                       <p className="line-clamp-2 font-medium">
-                        {it.media?.title || "(제목 없음)"}
+                        {it.media?.title || "(표제 없음)"}
                       </p>
                     </td>
                     <td className="px-3 py-2 text-right">

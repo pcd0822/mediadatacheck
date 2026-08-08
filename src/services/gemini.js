@@ -1,5 +1,5 @@
 /**
- * Netlify Function 프록시 호출 (VAPM v3.0 두 가지 모드).
+ * Netlify Function 프록시 호출 (VAPM v5.0 두 가지 모드).
  * 개발 시 vite.config.js의 proxy 설정으로 8888 포트를 통해 호출됨.
  */
 const ENDPOINT = "/.netlify/functions/gemini";
@@ -16,7 +16,9 @@ async function postJson(payload) {
 }
 
 /**
- * 체크리스트 항목 → 5대 검증 행동(V1~V5, 미분류는 V6) 매핑.
+ * 체크리스트 항목 → 5대 검증 행동(V1~V5, 미분류는 V6) 분류.
+ * v5.0에서 이 분류는 **점수 계산에 쓰이지 않는다.** 항목이 어떤 검증 행동에
+ * 해당하는지 학생에게 보여주고 지표별 평균을 표시하기 위한 라벨이다.
  * @param {Array<{question:string}>} items
  * @returns {Promise<Array<{dimension:string, verification:string, confidence:number, reason:string}>>}
  */
@@ -27,27 +29,30 @@ export async function mapChecklistItems(items) {
 }
 
 /**
- * 미디어 자료를 5대 검증 행동(V1~V5)으로 1~5점 평가.
- * - V4(이미지·영상)는 media.imageUrl이 있으면 Gemini가 멀티모달로 직접 이미지를 분석.
- *   imageUrl이 없고 본문에 시각 자료 언급도 없을 때만 score=null, skipped=true로 반환됨.
- * - 응답이 비어있거나 모든 점수가 누락되면 throw하여 fallback 일괄 저장 방지.
- * @param {{title:string, content:string, link?:string, imageUrl?:string}} media
- * @returns {Promise<Record<"V1"|"V2"|"V3"|"V4"|"V5", {score:number|null, skipped?:boolean, reason:string, redFlags?:string[]}>>}
+ * 미디어 자료를 **그 모둠의 체크리스트 항목**으로 채점한다 (미디어당 단일 호출).
+ *
+ * - 항목에 루브릭 서술이 있으면 프록시가 프롬프트에 그대로 포함시킨다.
+ * - 자료에 판단 단서가 없는 항목은 score=null, na=true와 그 사유가 돌아온다.
+ * - AI는 입력된 언론사·작성일·링크를 검증 없이 사실로 전제하고 채점한다(수업에서 다루는 한계).
+ *
+ * @param {{title:string, subtitle?:string, content:string, link?:string,
+ *          imageUrl?:string, publisher?:string, publishedAt?:string}} media
+ * @param {Array<{question:string, rubric?:object}>} items 체크리스트 항목(순서 = index)
+ * @returns {Promise<Array<{index:number, score:number|null, na:boolean, reason:string, redFlags:string[]}>>}
  */
-export async function evaluateMediaDimensions(media) {
-  const data = await postJson({ mode: "evaluate", media });
-  const dims = data.verifications ?? data.dimensions ?? null;
-  if (!dims) throw new Error("AI 평가 응답이 도착하지 않았어요. 다시 시도해주세요.");
-
-  const codes = ["V1", "V2", "V3", "V4", "V5"];
-  const valid = codes.filter((c) => {
-    const e = dims?.[c];
-    if (!e) return false;
-    if (e.skipped === true) return true; // V4 N/A도 유효한 응답으로 인정
-    return Number.isFinite(Number(e.score));
-  });
-  if (valid.length === 0) {
-    throw new Error("AI 평가 결과를 읽을 수 없어요. 잠시 후 다시 시도해주세요.");
+export async function evaluateMediaByChecklist(media, items) {
+  if (!items?.length) {
+    throw new Error("체크리스트 항목이 없어요. 먼저 체크리스트를 작성해주세요.");
   }
-  return dims;
+  // 프롬프트에 필요한 필드만 추려 보낸다(불필요한 본문 필드 전송 방지).
+  const payloadItems = items.map((it) => ({
+    question: it?.question ?? "",
+    rubric: it?.rubric ?? null,
+  }));
+  const data = await postJson({ mode: "evaluate", media, items: payloadItems });
+  const results = Array.isArray(data.items) ? data.items : null;
+  if (!results) {
+    throw new Error("AI 평가 응답이 도착하지 않았어요. 다시 시도해주세요.");
+  }
+  return results;
 }

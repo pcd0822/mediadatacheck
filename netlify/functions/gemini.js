@@ -1,9 +1,13 @@
 /**
- * Netlify Function: Gemini 프록시 (VAPM v3.0 지원)
+ * Netlify Function: Gemini 프록시 (VAPM v5.0)
  *
  * 두 가지 모드 지원:
- *  - mode: "map"      → 체크리스트 항목 → 5대 검증 행동(V1~V5) 자동 분류
- *  - mode: "evaluate" → 미디어 자료 → 5대 검증 행동 1~5점 평가 (단일 호출에서 5개 결과)
+ *  - mode: "map"      → 체크리스트 항목 → 5대 검증 행동(V1~V5) 자동 분류 (분석·표시용 라벨)
+ *  - mode: "evaluate" → 미디어 자료 → **그 모둠의 체크리스트 항목마다** 1~5점 + 근거
+ *                       (미디어당 단일 호출. 판단 단서가 없는 항목은 N/A + 사유)
+ *
+ * v4.0까지는 evaluate가 5대 검증 행동 5개에 점수를 매겼지만, v5.0에서는
+ * 채점 단위가 "학생이 만든 체크리스트 항목"으로 바뀌었다.
  *
  * GEMINI_API_KEY는 서버에서만 사용 (클라이언트 미노출).
  */
@@ -11,7 +15,7 @@
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 const VERIFICATION_GUIDE = `
-[VAPM v3.0 — 5대 검증 행동]
+[5대 검증 행동 — 체크리스트 항목 분류용 라벨]
 V1 출처 확인 (Source Check):
    매체 도메인의 정확성(타이포스쿼팅 여부), 매체 운영 이력·평판, "회사 소개"·연락처의
    충실성, 알려진 신뢰 매체 위장 여부, HTTPS·디자인 품질·광고 비율 등 매체 자체의 진위.
@@ -27,7 +31,7 @@ V3 콘텐츠 교차 확인 (Content Cross-check):
 V4 이미지·영상 확인 (Visual Verification):
    본문에 포함되거나 인용된 시각 자료(사진·영상·그래프·차트·스크린샷)의 출처·맥락 정합성,
    다른 사건 이미지의 재사용 여부, 딥페이크·AI 생성 신호(어색한 손가락, 깨진 글자, 입모양·
-   그림자 불일치). 본문에 시각 자료 언급이 전혀 없으면 score를 null로 두고 skipped: true.
+   그림자 불일치).
 
 V5 감정 반응 점검 (Emotional Reaction Check):
    자극적 어휘 빈도(충격·경악·비밀·절대 등), 클릭베이트 헤드라인, 분노·공포·혐오 유발,
@@ -42,7 +46,9 @@ function buildMapPrompt(items) {
     .map((it, idx) => `${idx}. ${it.question || "(빈 항목)"}`)
     .join("\n");
   return `당신은 미디어 리터러시 전문가입니다.
-다음 팩트체킹 질문들을 5대 검증 행동(VAPM v3.0의 V1~V5) 중 가장 적합한 단일 행동으로 분류하세요.
+다음 팩트체킹 질문들을 5대 검증 행동(V1~V5) 중 가장 적합한 단일 행동으로 분류하세요.
+이 분류는 점수 계산에 쓰이지 않고, 학생에게 "이 질문이 어떤 검증 행동에 해당하는지"를
+보여주고 지표별 평균을 표시하기 위한 라벨입니다.
 
 ${VERIFICATION_GUIDE}
 
@@ -59,41 +65,81 @@ ${list}
 {"mappings":[{"index":0,"verification":"V3","confidence":0.87,"reason":"..."}, ...]}`;
 }
 
-/* ===================== 평가 모드 ===================== */
+/* ===================== 평가 모드 (체크리스트 항목별 채점) ===================== */
 
-function buildEvaluatePrompt(media, { hasImage }) {
-  const v4Rule = hasImage
-    ? `- V4(이미지·영상 확인): 첨부된 이미지를 직접 분석하라. 이미지의 출처·맥락 정합성,
-    다른 사건 이미지의 재사용 흔적, 딥페이크·AI 생성 신호(어색한 손가락, 깨진 글자,
-    입모양·그림자 불일치 등)를 종합해 1~5점 정수로 평가한다. **이미지가 첨부되어 있으므로
-    절대 skipped 처리하지 말고 반드시 1~5점 정수 점수를 부여한다.** 이미지에서 발견한
-    구체적인 단서를 reason에 1~2문장으로 적는다.`
-    : `- V4(이미지·영상 확인): 본문에 시각 자료 언급이 전혀 없을 때에 한해
-    score를 null, skipped를 true로 표시하고 reason에 "본문에 시각 자료 언급 없음"으로 적는다.
-    본문에 사진·영상·그래프·차트·스크린샷 인용이 조금이라도 언급되면 일반 점수를 부여한다.`;
-  return `당신은 미디어 리터러시 보조 AI입니다.
-다음 미디어 자료를 5대 검증 행동(VAPM v3.0의 V1~V5) 각각에 대해 1~5점 정수로 평가하세요.
-각 행동의 평가 근거를 1~2문장 한국어로 작성합니다.
+/** 루브릭({1:"...",...})을 프롬프트에 넣을 한 줄 문자열로. 비어 있으면 null. */
+function formatRubric(rubric) {
+  if (!rubric || typeof rubric !== "object") return null;
+  const lines = [];
+  for (const score of [1, 2, 3, 4, 5]) {
+    const text = rubric[score] ?? rubric[String(score)];
+    if (typeof text === "string" && text.trim()) {
+      lines.push(`${score}점 = ${text.trim()}`);
+    }
+  }
+  return lines.length ? lines.join(" / ") : null;
+}
+
+function buildChecklistBlock(items) {
+  return items
+    .map((it, idx) => {
+      const rubric = formatRubric(it?.rubric);
+      const head = `[항목 ${idx}] ${it?.question || "(빈 질문)"}`;
+      // 학생이 직접 쓴 루브릭 서술이 있으면 그대로 넣어 그 기준으로 채점하게 한다.
+      return rubric ? `${head}\n    채점 기준: ${rubric}` : head;
+    })
+    .join("\n");
+}
+
+function buildEvaluatePrompt(media, items, { hasImage }) {
+  const imageRule = hasImage
+    ? `- 이미지가 별도 파트로 첨부되어 있다. 시각 자료를 묻는 항목은 그 이미지를 직접 분석해
+  점수를 부여하고, 이미지에서 발견한 구체적 단서를 reason에 적는다. 이미지가 있으므로
+  시각 자료 항목을 "단서 없음"으로 처리하지 않는다.`
+    : `- 첨부된 이미지가 없다. 시각 자료(사진·영상·그래프)를 직접 확인해야만 답할 수 있는
+  항목인데 본문에 시각 자료 언급조차 없다면 "na": true 로 처리한다.`;
+
+  return `당신은 미디어 리터러시 수업을 돕는 보조 AI입니다.
+학생들이 직접 만든 아래 체크리스트 항목을 **하나씩 순서대로** 미디어 자료에 적용해
+항목마다 1~5점을 매기고 판단 근거를 한국어 1~2문장으로 쓰세요.
 
 ${VERIFICATION_GUIDE}
 
 [미디어 자료]
-제목: ${media.title || "(제목 없음)"}
+표제: ${media.title || "(없음)"}
+부제: ${media.subtitle || "(없음)"}
+언론사: ${media.publisher || "(없음)"}
+작성일: ${media.publishedAt || "(없음)"}
 링크: ${media.link || "(없음)"}
 첨부 이미지: ${hasImage ? "있음 (별도 파트로 전달됨)" : "없음"}
 본문:
 ${media.content || ""}
 
+[체크리스트 항목 — 이 목록이 유일한 채점 기준]
+${buildChecklistBlock(items)}
+
+중요 — 당신이 할 수 없는 일:
+- 위에 적힌 언론사·작성일·링크·표제는 **입력된 값을 그대로 전제**하고 판단해야 한다.
+  당신은 웹을 검색할 수 없으므로 그 매체가 실재하는지, 작성일이 정확한지, 링크가 살아
+  있는지 확인할 수 없다.
+- 따라서 "○○일보에 확인한 결과", "다른 매체와 대조해보니"처럼 **실제로 하지 않은 확인을
+  했다고 쓰지 말 것.** 대신 "제시된 정보상", "본문에 드러난 범위에서"처럼 판단 근거의
+  범위를 정확히 밝힌다.
+- 외부 대조가 반드시 필요한 항목인데 자료 안에 단서가 없으면 점수를 추측하지 말고
+  "na": true 로 처리하고, reason에 **왜 판단할 수 없었는지**를 학생이 읽고 이해할 수 있게 쓴다.
+
 규칙:
-- 점수는 1, 2, 3, 4, 5 중 하나의 정수.
-- V1~V5 5개 행동 모두 평가.
-${v4Rule}
-- redFlags는 발견된 위험 신호(예: "타이포스쿼팅 의심 도메인", "분노 유발 헤드라인",
-  "딥페이크 의심 합성 흔적")가 있을 때만 배열로 채우고, 없으면 빈 배열을 둔다.
+- 체크리스트 항목 ${items.length}개 **전부**에 대해 결과를 반환한다. index는 위 항목 번호 그대로.
+- 점수는 1, 2, 3, 4, 5 중 하나의 정수. 채점 기준(루브릭)이 있으면 그 서술을 그대로 따른다.
+- 판단 단서가 없는 항목만 "score": null, "na": true 로 하고 그 외에는 반드시 점수를 준다.
+  단서가 조금이라도 있으면 na로 빠지지 말고 점수를 부여한다.
+${imageRule}
+- redFlags는 그 항목에서 발견한 위험 신호(예: "타이포스쿼팅 의심 도메인", "분노 유발 헤드라인",
+  "출처 없는 통계 인용")가 있을 때만 배열로 채우고, 없으면 빈 배열.
 - JSON만 출력. 마크다운 금지.
 
 응답 스키마:
-{"verifications":{"V1":{"score":4,"reason":"...","redFlags":[]},"V2":{"score":3,"reason":"..."},"V3":{"score":5,"reason":"..."},"V4":{"score":${hasImage ? "3" : "null"},${hasImage ? "" : "\"skipped\":true,"}"reason":"..."},"V5":{"score":2,"reason":"..."}}}`;
+{"items":[{"index":0,"score":4,"reason":"...","redFlags":[]},{"index":1,"score":null,"na":true,"reason":"이 항목은 다른 매체와 대조해야 판단할 수 있는데 자료 안에 비교할 단서가 없었어요."}]}`;
 }
 
 /* ===================== 유틸 ===================== */
@@ -257,7 +303,6 @@ async function callGemini(apiKey, prompt, inlineImage) {
 }
 
 const VALID_DIMS = ["V1", "V2", "V3", "V4", "V5", "V6"];
-const EVAL_DIMS = ["V1", "V2", "V3", "V4", "V5"];
 
 /**
  * 레거시 차원 코드(D1~D8: HPFM v1, C1~C6: IPFM v2)를 VAPM v3 코드로 매핑.
@@ -314,101 +359,78 @@ function normalizeMappings(parsed, items) {
 }
 
 /**
- * 평가 응답 정규화.
- * - 응답은 `verifications` 키 또는 레거시 `dimensions` 키 모두 허용.
- * - V4의 `skipped: true` 또는 `score: null`은 "이미지 없음"으로 보존(=N/A).
- *   단 hasImage=true이면 V4 skipped를 무시하고 평균 점수로 fallback (학생이 이미지를 첨부했으므로).
- * - 레거시 키(D1~D8, C1~C6)가 섞여 와도 V1~V5로 평균 변환.
- * - 모든 행동이 빈 채로 오면 throw.
+ * 항목별 평가 응답 정규화.
+ * - 응답 배열은 `items` 키(또는 레거시 호환 `results`)를 허용.
+ * - index로 체크리스트 항목과 짝지으며, 항상 items.length 길이의 배열을 반환한다.
+ * - AI가 빠뜨린 항목은 **임의의 평균값으로 채우지 않고** N/A로 둔다.
+ *   근거 없는 점수를 만들지 않는 것이 이 수업의 취지에 맞기 때문.
+ * - 유효 응답이 하나도 없으면 throw (일괄 N/A 저장 방지).
  */
-function normalizeEvaluation(parsed, { hasImage = false } = {}) {
-  const dims = parsed?.verifications ?? parsed?.dimensions ?? {};
-  const sums = {};
-  const counts = {};
-  const reasons = {};
-  const redFlags = {};
-  const skipped = {};
+function normalizeItemEvaluation(parsed, items) {
+  const arr = Array.isArray(parsed?.items)
+    ? parsed.items
+    : Array.isArray(parsed?.results)
+    ? parsed.results
+    : [];
 
-  for (const rawCode of Object.keys(dims)) {
-    const v = dims[rawCode];
-    if (!v || typeof v !== "object") continue;
-    const targets = resolveVerificationCode(rawCode);
-    if (!targets) continue;
+  const byIndex = new Map();
+  arr.forEach((r, order) => {
+    if (!r || typeof r !== "object") return;
+    // index가 없으면 응답 배열 순서를 사용(모델이 index를 빠뜨리는 경우 대비).
+    const idx = Number.isInteger(Number(r.index)) ? Number(r.index) : order;
+    if (idx < 0 || idx >= items.length) return;
+    if (!byIndex.has(idx)) byIndex.set(idx, r);
+  });
 
-    // hasImage가 true면 V4의 skipped 응답을 무시 (학생이 이미지를 첨부했으므로 평가해야 함).
-    const isV4Target = targets.includes("V4");
-    const rawSkipped =
-      v.skipped === true || v.score === null || v.score === "null";
-    const isSkipped = rawSkipped && !(isV4Target && hasImage);
-    const raw = isSkipped ? null : Math.round(Number(v.score));
-    const score = isSkipped
-      ? null
-      : Number.isFinite(raw)
-      ? Math.max(1, Math.min(5, raw))
-      : null;
-
-    for (const t of targets) {
-      if (!EVAL_DIMS.includes(t)) continue;
-      if (score === null) {
-        // skipped: 점수 없이 reason과 skipped만 기록
-        if (skipped[t] === undefined) skipped[t] = isSkipped;
-        if (!reasons[t] && typeof v.reason === "string" && v.reason.trim()) {
-          reasons[t] = v.reason;
-        }
-        continue;
-      }
-      sums[t] = (sums[t] ?? 0) + score;
-      counts[t] = (counts[t] ?? 0) + 1;
-      if (!reasons[t] && typeof v.reason === "string" && v.reason.trim()) {
-        reasons[t] = v.reason;
-      }
-      if (!redFlags[t] && Array.isArray(v.redFlags) && v.redFlags.length) {
-        redFlags[t] = v.redFlags
-          .filter((s) => typeof s === "string" && s.trim())
-          .slice(0, 5);
-      }
-    }
-  }
-
-  const filledCount = EVAL_DIMS.filter((d) => counts[d]).length;
-  const skippedCount = EVAL_DIMS.filter((d) => skipped[d] && !counts[d]).length;
-  if (filledCount === 0 && skippedCount === 0) {
+  if (byIndex.size === 0) {
     const err = new Error("AI 평가 응답이 비어 있어요. 잠시 후 다시 시도해주세요.");
     err.status = 502;
-    err.detail = JSON.stringify(parsed).slice(0, 500);
+    err.detail = JSON.stringify(parsed ?? {}).slice(0, 500);
     throw err;
   }
 
-  const out = {};
-  for (const code of EVAL_DIMS) {
-    if (counts[code]) {
-      out[code] = {
-        score: Math.round(sums[code] / counts[code]),
-        reason: reasons[code] ?? "",
-        redFlags: redFlags[code] ?? [],
-      };
-    } else if (skipped[code]) {
-      // V4가 N/A인 경우 (이미지·영상 언급 없음) 점수 없이 보존
-      out[code] = {
+  const out = items.map((_, i) => {
+    const r = byIndex.get(i);
+    if (!r) {
+      return {
+        index: i,
         score: null,
-        skipped: true,
-        reason: reasons[code] ?? "본문에 해당 검증 행동의 단서가 없어 평가에서 제외했어요.",
-        redFlags: [],
-      };
-    } else {
-      // 일부 행동만 비어있는 경우 (V4 외 다른 행동) — 평균 점수로 fallback
-      const present = EVAL_DIMS.filter((d) => counts[d]).map(
-        (d) => sums[d] / counts[d]
-      );
-      const avg = present.length
-        ? Math.round(present.reduce((a, b) => a + b, 0) / present.length)
-        : 3;
-      out[code] = {
-        score: Math.max(1, Math.min(5, avg)),
-        reason: "이 행동은 자료에서 단서를 찾기 어려워 평균값을 사용했어요.",
+        na: true,
+        reason: "AI가 이 항목에 대한 응답을 돌려주지 않았어요. 다시 실행하면 채점될 수 있어요.",
         redFlags: [],
       };
     }
+    const isNa =
+      r.na === true ||
+      r.skipped === true ||
+      r.score === null ||
+      r.score === "null" ||
+      r.score === undefined;
+    const raw = isNa ? NaN : Math.round(Number(r.score));
+    const score = Number.isFinite(raw) ? Math.max(1, Math.min(5, raw)) : null;
+    return {
+      index: i,
+      score,
+      na: score === null,
+      reason:
+        typeof r.reason === "string" && r.reason.trim()
+          ? r.reason.trim()
+          : score === null
+          ? "자료 안에서 이 항목을 판단할 단서를 찾지 못했어요."
+          : "",
+      redFlags: Array.isArray(r.redFlags)
+        ? r.redFlags.filter((s) => typeof s === "string" && s.trim()).slice(0, 5)
+        : [],
+    };
+  });
+
+  if (out.every((r) => r.score === null)) {
+    const err = new Error(
+      "AI가 모든 항목을 판단하지 못했어요. 본문이 너무 짧거나 일시적인 오류일 수 있어요."
+    );
+    err.status = 502;
+    err.detail = JSON.stringify(parsed ?? {}).slice(0, 500);
+    throw err;
   }
   return out;
 }
@@ -450,6 +472,7 @@ export async function handler(event) {
     return jsonResponse(400, { error: "잘못된 요청 본문" });
   }
 
+  // 두 모드 모두 items를 쓰므로(map=분류 대상, evaluate=채점 기준) media 유무로 먼저 가른다.
   const mode = payload.mode || (payload.media ? "evaluate" : payload.items ? "map" : null);
 
   try {
@@ -463,19 +486,23 @@ export async function handler(event) {
     if (mode === "evaluate") {
       const media = payload.media;
       if (!media?.content) return jsonResponse(400, { error: "media.content가 필요합니다." });
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      if (items.length === 0) {
+        return jsonResponse(400, {
+          error: "채점할 체크리스트 항목(items)이 필요합니다.",
+        });
+      }
       const inlineImage = media.imageUrl
         ? await fetchImageInline(media.imageUrl)
         : null;
       const parsed = await callGemini(
         apiKey,
-        buildEvaluatePrompt(media, { hasImage: Boolean(inlineImage) }),
+        buildEvaluatePrompt(media, items, { hasImage: Boolean(inlineImage) }),
         inlineImage
       );
-      const verifications = normalizeEvaluation(parsed, {
-        hasImage: Boolean(inlineImage),
+      return jsonResponse(200, {
+        items: normalizeItemEvaluation(parsed, items),
       });
-      // 클라이언트 호환을 위해 dimensions 키도 함께 반환
-      return jsonResponse(200, { verifications, dimensions: verifications });
     }
 
     return jsonResponse(400, { error: "mode는 'map' 또는 'evaluate' 중 하나여야 합니다." });

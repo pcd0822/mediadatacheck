@@ -1,12 +1,19 @@
-# 미디어 리터러시 · 팩트체크 학습 플랫폼 (VAPM v4.0)
+﻿# 미디어 리터러시 · 팩트체크 학습 플랫폼 (VAPM v5.0)
 
-중·고등학생이 **스스로 팩트체크 체크리스트를 설계**하고, 그 기준으로 미디어 자료를
-평가하면서 **자신의 채점을 교사 기준에 데이터로 맞춰 가는(보정)** AI 활용 탐구형 학습 플랫폼입니다.
+중·고등학생이 **스스로 팩트체크 체크리스트를 설계**하고, **그 체크리스트만을 근거로**
+AI가 미디어 자료를 채점한 결과를 자기 판단과 견주어 검토하는 AI 활용 탐구형 학습 플랫폼입니다.
 
-> **v4.0에서 바뀐 점:** v3.0의 베이지안 가중치(μ,σ)·학습률 감쇠·cold start·신뢰구간·수렴도를
-> 모두 걷어내고, 교육측정에서 확립된 **채점자 보정(rater calibration / moderation)** 절차로
-> 채점 알고리즘을 단순화했습니다. "같은 미디어를 교사와 학생이 채점한 평균 차이"를 검증 행동별
-> **보정값**으로 만들어 AI 점수에 가감합니다. 산출 근거를 교육적 언어로 한 줄에 설명할 수 있습니다.
+> **v5.0에서 바뀐 점 (전면 개편):** v4.0의 **교사 기준 보정을 완전히 제거**했습니다.
+> 예전에는 교사 채점을 정답지로 삼아 그 차이(보정값)를 AI 점수에 더했는데, 그러면 학생이
+> "AI 점수"라고 보는 값이 실은 교사 기준에 정박된 값이라 **AI의 판단을 자기 판단과 견주어
+> 검토하는 수업 활동이 성립하지 않았습니다.**
+>
+> v5.0은 점수 산출 근거를 **학생이 만든 체크리스트 하나로 단일화**하고, 채점 단위도
+> "5대 검증 행동"에서 **"체크리스트 항목 하나하나"** 로 바꿨습니다. 총점은 항목 점수의
+> 단순 합계(원점수)이고, 등급은 백분율로 판정합니다. 교사는 이제 **자료를 등록하는 역할**만 합니다.
+>
+> 변경의 교육적 배경은 [ALGORITHM.md §2](./ALGORITHM.md#2-왜-교사-기준-보정을-없앴을까),
+> 이전 버전(v4.0)의 작동 방식은 [ALGORITHM.md 부록 A](./ALGORITHM.md#부록-a-이전-버전-v40--교사-기준-보정-방식)에 보존되어 있습니다.
 
 이 문서는 "이 프로그램이 점수를 **어떻게** 매기고, **왜** 그렇게 매기는지"를 비전공자도
 이해할 수 있게 풀어서 설명하고, **다른 사람이 똑같이 만들어 쓸 수 있도록** Firebase 구축과
@@ -19,15 +26,18 @@ Google 로그인 설정까지 단계별로 안내합니다.
 1. [한눈에 보기](#-한눈에-보기)
 2. [기술 스택](#-기술-스택)
 3. [5대 검증 행동(V1~V5)이란?](#-5대-검증-행동v1v5이란)
-4. **[① 학생 점수가 표준화되는 전체 과정](#-1-학생-점수가-표준화되는-전체-과정)**
-5. **[② 교사 점수와 학생 점수의 차이가 보정값이 되는 원리](#-2-교사-점수와-학생-점수의-차이가-보정값이-되는-원리)**
-6. **[③ AI 기반 점수 산출식과 그렇게 계산하는 이유](#-3-ai-기반-점수-산출식과-그렇게-계산하는-이유)**
-7. **[④ 데이터가 쌓일수록 점수가 보정되는 원리](#-4-데이터가-쌓일수록-점수가-보정되는-원리)**
+4. **[① 체크리스트가 점수의 유일한 근거가 되는 과정](#-1-체크리스트가-점수의-유일한-근거가-되는-과정)**
+5. **[② AI 항목별 채점 — 요청·응답과 N/A 처리](#-2-ai-항목별-채점--요청응답과-na-처리)**
+6. **[③ 점수 산출식 — 원점수·만점·백분율·등급·과락](#-3-점수-산출식--원점수만점백분율등급과락)**
+7. **[④ 미디어 자료 — 등록 주체와 접근 격리](#-4-미디어-자료--등록-주체와-접근-격리)**
 8. **[⑤ 직접 구축하기 — Firebase / Firestore / Storage](#-5-직접-구축하기--firebase--firestore--storage)**
 9. **[⑥ Google 로그인(OAuth) 허용 과정](#-6-google-로그인oauth-허용-과정)**
 10. [환경 변수 · 로컬 실행 · 배포](#-환경-변수--로컬-실행--배포)
-11. [Firestore 데이터 구조](#-firestore-데이터-구조-vapm-30)
-12. [부록 — 레거시 매핑 / 프로젝트 구조](#-부록)
+11. **[수업 활동 — 4단계 순차 게이트](#-수업-활동--4단계-순차-게이트)**
+12. [Firestore 데이터 구조](#-firestore-데이터-구조-vapm-50)
+13. [v4.0 → v5.0 마이그레이션](#-v40--v50-마이그레이션)
+14. **[v5.0 데이터 초기화 (관리자용)](#-v50-데이터-초기화-관리자용)**
+15. [부록 — 레거시 매핑 / 프로젝트 구조](#-부록)
 
 ---
 
@@ -36,26 +46,25 @@ Google 로그인 설정까지 단계별로 안내합니다.
 학생은 다음 흐름을 따라갑니다.
 
 ```
-① 체크리스트 만들기          내가 미디어를 의심할 질문들을 직접 작성
-        │                   (각 질문은 5대 검증 행동 V1~V5로 자동 분류됨)
+① 체크리스트 만들기          미디어를 의심할 질문 + 1~5점 루브릭을 직접 작성
+        │                   (각 질문은 5대 검증 행동으로 자동 분류 — 표시용 라벨)
         ▼
-② 기준 다듬기(모델링)         선생님이 올린 미디어를 내가 채점 → 선생님 채점과 비교
-        │                   → 검증 행동별 "평균 차이(보정값)"가 계산됨
+② 미디어 자료 준비           선생님이 올린 공통 자료 / 우리 모둠 조장이 올린 자료
+        │                   표제·부제·본문·이미지·작성일·언론사
         ▼
-③ 팩트체크 실행              새 미디어를 AI(Gemini)가 V1~V5 각 1~5점으로 채점
-        │
+③ 팩트체크 실행              AI(Gemini)가 체크리스트 항목을 하나씩 적용해
+        │                   항목마다 1~5점 + 근거. 단서 없는 항목은 N/A + 사유
         ▼
-④ 최종 점수 + 등급           AI 점수에 보정값을 더해 50점 만점으로 환산, 신뢰 등급·과락 경고 표시
-        │
-        ▼
-⑤ 수용 / 정교화              AI 결과에 동의(수용)하거나 내 점수로 수정(정교화)
-        │                   → 마스터리·평가 습관 분석에 반영됨 (보정값은 안 바뀜)
-        ▼
-⑥ 마스터리 · 피드백 카드      검증 행동별 숙련도와 "내 평가 습관" 진단을 받음
+④ 결과 확인                  원점수 / 만점 / 백분율  예) "38점 / 50점 만점 (76%)"
+                            + 백분율 기준 신뢰 등급 + 항목 과락 경고
+                            + N/A 사유 + ★ AI가 확인하지 못한 것 고지
 ```
 
-핵심 아이디어 한 줄: **"AI가 매긴 1~5점"에 "교사와 나의 평균 채점 차이(보정값)"를 더해
-교사 기준에 정박된 50점짜리 신뢰도 점수로 바꾸고, 모델링이 쌓일수록 보정값이 정확해진다.**
+핵심 아이디어 한 줄: **"AI가 우리 체크리스트 항목을 하나씩 적용해 매긴 1~5점을 그대로
+더한 것이 총점"** — 보정도 가중치도 없어 학생이 손으로 검산할 수 있습니다.
+
+v4.0에 있던 **기준 다듬기(모델링)**, **수용/정교화**, **마스터리**, **피드백 카드**,
+**교사 정답지 평가** 단계는 모두 제거되었습니다.
 
 ---
 
@@ -78,8 +87,13 @@ Google 로그인 설정까지 단계별로 안내합니다.
 
 ## 🧩 5대 검증 행동(V1~V5)이란?
 
-이 프로그램의 모든 점수는 "5가지 검증 행동"이라는 공통 기준 위에서 계산됩니다.
-추상적인 점수 한 개가 아니라, **학생이 실제로 해야 하는 5가지 행동**으로 미디어를 쪼개서 봅니다.
+> ⚠️ **v5.0에서 5대 검증 행동은 점수 계산에서 빠졌습니다.** 지금은 ① 체크리스트 항목에
+> 라벨을 달고 ② 지표별 평균을 표시하는 **분석·비교 용도**로만 쓰입니다. 점수는 체크리스트
+> 항목 단위로만 계산됩니다.
+
+학생이 미디어 자료를 만났을 때 실제로 수행해야 하는 5가지 행동입니다.
+학생이 만든 자유로운 질문이 어느 행동에 해당하는지 자동 분류해, "우리 체크리스트가
+어떤 검증 행동을 놓치고 있는지" 스스로 점검할 수 있게 합니다.
 
 | 코드 | 검증 행동 | 무엇을 확인하나 |
 |------|-----------|----------------|
@@ -94,226 +108,245 @@ Google 로그인 설정까지 단계별로 안내합니다.
 
 ---
 
-## 🟦 ① 학생 점수가 표준화되는 전체 과정
+## 🟦 ① 체크리스트가 점수의 유일한 근거가 되는 과정
 
-학생이 체크리스트에 매긴 점수는 그대로 쓰이지 않습니다.
-**서로 다른 학생·서로 다른 질문을 같은 잣대(V1~V5)로 비교할 수 있게 표준화**하는
-2단계를 거칩니다. (이렇게 표준화된 학생 점수는 ②에서 교사 점수와 비교되어 보정값을 만들고,
-50점 환산은 ③의 팩트체크에서 이뤄집니다.)
+v5.0에서 점수를 만드는 재료는 **딱 하나, 학생이 만든 체크리스트**입니다.
+교사 채점도, 보정값도, 가중치도 개입하지 않습니다.
 
-### 1단계 — 자유로운 질문을 5대 검증 행동으로 "분류"
+### 1단계 — 학생이 질문과 루브릭을 작성
 
-학생이 만든 체크리스트 질문은 제각각입니다.
-예) "이 사이트 주소가 진짜 언론사 주소인가?", "사진이 다른 사건 거 아닌가?"
-
-저장하는 순간, AI(Gemini의 `map` 모드)가 각 질문을 V1~V5 중 하나로 자동 분류합니다.
-- "사이트 주소…" → **V1(출처)**
-- "사진이 다른 사건…" → **V4(이미지)**
-
-이렇게 해야 학생마다 질문 문장이 달라도 **같은 검증 행동끼리 묶어서** 비교할 수 있습니다.
-(분류 결과는 `mappingCache.js`에 캐시해 같은 질문을 두 번 AI에 묻지 않습니다 — 무료 쿼터 보호.)
-
-### 2단계 — 항목 점수를 검증 행동별 "평균"으로 집계
-
-한 검증 행동에 질문이 여러 개 붙을 수 있습니다.
-예) V1에 질문 2개(점수 4점, 2점)가 있으면 → V1 = (4+2)/2 = **3.0점**.
-
-```
-aggregateToDimensions(체크리스트 항목들, 점수들)
-  → { V1: 3.0, V2: 5.0, V3: 4.0, V4: null, V5: 2.0 }   // 1~5점 척도
-```
-- 어떤 검증 행동에 해당하는 질문이 하나도 없으면 그 값은 `null`(해당 없음)이 됩니다.
-- 코드: `src/utils/hpfm.js`의 `aggregateToDimensions()`.
-
-이 단계의 결과를 **`studentDimensionScores`(학생의 검증 행동별 점수)** 라고 부릅니다.
-모든 학생이 똑같은 5칸짜리 표로 환산되므로, 여기서부터는 누구든 직접 비교가 가능합니다.
-
-> **요약:** 자유 질문 → (1) V1~V5 분류 → (2) 행동별 평균. 이 2단계가 학생 점수 "표준화"의
-> 전부입니다. 이렇게 만든 `studentDimensionScores`가 ②에서 같은 미디어의 교사 점수와
-> 비교되어 **보정값**을 만들고, 그 보정값이 ③의 팩트체크에서 50점으로 환산됩니다.
->
-> _(v3.0에는 여기에 "가중치 곱 → 50점 환산"·"신뢰구간 부여" 2단계가 더 있었지만,
-> v4.0에서는 가중치·신뢰구간을 없애고 그 자리를 교사 기준 보정으로 대체했습니다.)_
-
----
-
-## 🟩 ② 교사 점수와 학생 점수의 차이가 보정값이 되는 원리
-
-이 프로그램의 가장 중요한 학습 장치입니다. **교사 점수는 "기준점(reference)"** 역할을 하고,
-**학생 점수와의 평균 차이(보정값)** 가 AI 점수를 교사 기준에 맞춰 줍니다.
-이는 교육측정에서 확립된 **채점자 보정(rater calibration / moderation)** 절차와 같은 논리입니다.
-
-### 교사 점수는 어디서 오나
-
-교사는 `/teacher/evaluate/:mediaId`에서 같은 미디어를 5대 검증 행동 기준으로 채점합니다.
-저장 시 교사 항목도 V1~V5로 자동 분류·집계되어 **`teacherDimensionScores`** 가 됩니다.
-(코드: `TeacherEvaluation.jsx` → `setTeacherEvaluation()`.)
-
-### 핵심: 보정값 = 교사·학생 점수 차이의 "평균"
-
-학생이 "기준 다듬기(모델링)"에서 선생님 미디어를 채점하면, 같은 미디어에 대한
-교사 점수와 비교해 검증 행동별 격차(gap)를 계산해 학습 데이터에 저장합니다.
-
-```
-gap_i = (교사의 V_i 점수) − (학생의 V_i 점수)          (코드: computeGap)
-```
-
-그리고 지금까지 저장된 **모든 모델링 레코드**를 대상으로, 검증 행동 V_i마다 gap의 평균을 내
-그 항목의 **보정값(correction)** 으로 삼습니다.
-
-```
-correction_i = 0                                   (그 항목 모델링 건수 < 3)
-             = clamp( mean(gap_i), −1.0, +1.0 )    (그 외)
-```
-- **누적이 아니라 전량 재계산**입니다. 저장할 때마다 그 워크스페이스의 modeling 레코드
-  전체에서 다시 계산하므로 **순서와 무관하고 멱등**합니다(같은 데이터 → 항상 같은 결과).
-- **최소 건수(3건)** 미달 항목은 보정하지 않습니다(0). 표본이 적을 때의 우연을 막는 안정장치.
-- **±1.0점 클램프**: 리커트 척도에서 한 눈금 이상 통째로 밀지 않도록 제한.
-- 수용/정교화(accept/refine) 레코드는 **교사 기준점이 없어 보정값 계산에서 제외**합니다.
-- 코드: `computeCorrections()` in `src/utils/hpfm.js`.
-
-### 이게 점수에 주는 실제 효과 — 숫자 예시
-
-선생님은 V5(감정 반응 점검)를 낮게 봤는데(엄격), 학생은 매번 후하게 줬다고 합시다.
-모델링 4건의 gap_V5가 `[−0.5, −1.0, −0.5, −0.4]`이면 → 평균 −0.6 → `correction_V5 = −0.6`.
-
-이후 학생이 **새 미디어를 팩트체크할 때 AI가 V5에 4점을 주면, 보정값을 더해 4 + (−0.6) = 3.4점**
-으로 낮춰 계산됩니다. "너는 감정 자극에 후한 편이니 그만큼 깎아 교사 기준에 맞춘다"는 뜻입니다.
-반대로 학생이 교사와 비슷하게 봤다면 gap 평균이 0에 가까워 보정값도 0에 수렴합니다.
-
-### 보조 경로: 팩트체크에서의 "학생 vs AI" 차이
-
-위는 **교사 vs 학생** 차이(보정값을 만드는 모델링 단계)입니다. 한편 팩트체크 결과 화면에서
-학생이 AI 점수를 손보면(정교화), 그때는 **학생 vs AI** 격차가 기록됩니다
-(`gap = 학생 수정점수 − AI점수`). 단, 이 격차는 **보정값을 바꾸지 않고** 마스터리·평가 습관
-분석에만 쓰입니다(교사 기준점이 없는 데이터이기 때문).
-
----
-
-## 🟨 ③ AI 기반 점수 산출식과 그렇게 계산하는 이유
-
-### 1) AI(Gemini)가 미디어를 1~5점으로 채점
-
-팩트체크를 실행하면 미디어(제목·본문·링크·첨부 이미지)가 Netlify Function을 거쳐
-Gemini의 `evaluate` 모드로 전달됩니다. AI는 **단 한 번의 호출로 V1~V5 다섯 개**를
-각각 1~5 정수로 채점하고, 행동별 근거와 위험신호(redFlags)를 함께 돌려줍니다.
+`ChecklistEditor.jsx`에서 항목마다 **평가 질문**과 **1~5점 루브릭**(각 점수의 의미)을 씁니다.
 
 ```jsonc
-{ "verifications": {
-    "V1": { "score": 4, "reason": "...", "redFlags": [] },
-    "V2": { "score": 3, "reason": "..." },
-    "V3": { "score": 5, "reason": "..." },
-    "V4": { "score": null, "skipped": true, "reason": "본문에 시각 자료 없음" },
-    "V5": { "score": 2, "reason": "..." }
-} }
+{
+  "question": "이 사이트 주소가 진짜 언론사 주소인가?",
+  "rubric": {
+    "1": "도메인이 알려진 매체를 흉내 낸 주소",
+    "3": "처음 보는 매체지만 운영 정보는 있음",
+    "5": "도메인·운영 주체·연락처가 모두 확인됨"
+  }
+}
 ```
 
-**왜 이렇게 호출하나 (설계 의도):**
-- **5개를 한 번에** 묶어 호출 → AI 호출 횟수를 미디어당 1회로 묶어 **무료 쿼터를 보호**.
-- 모둠에서는 같은 미디어를 **single-flight**(`factcheck_runs` 트랜잭션)로 1명만 호출하고
-  결과를 공유 → N명이 같은 자료를 봐도 호출은 1회.
+루브릭은 **선택 입력**이지만, 채워 두면 프롬프트에 그대로 실려 AI가 그 서술을 기준으로
+채점합니다. 즉 **루브릭이 구체적일수록 AI 채점이 학생 기준에 가까워집니다.**
+
+### 2단계 — 질문을 5대 검증 행동으로 자동 분류 (표시용 라벨)
+
+저장하는 순간 AI(Gemini `map` 모드)가 각 질문을 V1~V5 중 하나로 분류하고, 어디에도 맞지
+않으면 V6로 둡니다. **이 분류는 점수 계산에 쓰이지 않습니다.** 하는 일은 두 가지뿐입니다.
+
+1. 체크리스트/결과 화면에 "이 질문은 V3(콘텐츠 교차 확인)" 배지 표시
+2. 결과·대시보드의 **지표별 평균** 산출 (`aggregateItemsToDimensions`)
+
+분류 결과는 `mappingCache.js`가 질문 텍스트를 키로 캐시해, 같은 질문을 두 번 AI에 묻지
+않습니다(무료 쿼터 보호). 질문을 고치면 그 항목만 다시 분류됩니다.
+
+### 3단계 — 커버리지 점검
+
+대시보드는 체크리스트 항목의 dimension 분포를 보고 **비어 있는 검증 행동**을 경고합니다.
+
+> "이 체크리스트엔 V3(콘텐츠 교차 확인)를 묻는 항목이 없어요 — 그 영역은 **아예 채점되지 않습니다.**"
+
+v4.0에서는 이런 경우 "AI 평가가 지배적으로 적용된다"고 안내했지만, v5.0에서는 체크리스트에
+없는 것은 **그냥 채점되지 않습니다.** 표현이 정직해진 것이자, 학생이 자기 도구의 빈틈을
+직접 메우도록 유도하는 장치입니다.
+
+---
+
+## 🟩 ② AI 항목별 채점 — 요청·응답과 N/A 처리
+
+### 요청 — 미디어 1건 + 체크리스트 전체를 한 번에
+
+팩트체크를 실행하면 미디어와 체크리스트 항목이 Netlify Function을 거쳐 Gemini의
+`evaluate` 모드로 전달됩니다. **미디어당 호출은 1회**입니다(항목 수와 무관).
+
+```jsonc
+// POST /.netlify/functions/gemini
+{
+  "mode": "evaluate",
+  "media": {
+    "title": "...", "subtitle": "...", "content": "...",
+    "publisher": "○○일보", "publishedAt": "2026-03-04",
+    "link": "https://...", "imageUrl": "https://..."
+  },
+  "items": [
+    { "question": "이 사이트 주소가 진짜 언론사 주소인가?", "rubric": { "1": "...", "5": "..." } },
+    { "question": "사진이 다른 사건 거 아닌가?", "rubric": null }
+  ]
+}
+```
+
+### 응답 — 항목별 점수·근거, 또는 N/A와 그 사유
+
+```jsonc
+{ "items": [
+    { "index": 0, "score": 4, "reason": "도메인과 운영 주체가 본문에 명시되어 있음", "redFlags": [] },
+    { "index": 1, "score": null, "na": true,
+      "reason": "이미지가 첨부되지 않았고 본문에도 사진 언급이 없어 판단할 단서가 없었어요." }
+] }
+```
+
+**설계 의도:**
+- **항목 전체를 한 번에** 묶어 호출 → 호출 횟수를 미디어당 1회로 고정, 무료 쿼터 보호.
+- 모둠에서는 같은 **미디어 + 체크리스트 내용**을 **single-flight**(`factcheck_runs` 트랜잭션)로
+  1명만 호출하고 결과를 공유 → N명이 같은 자료를 봐도 호출은 1회.
+  (runKey에 **질문 텍스트 해시**가 포함되어, 체크리스트를 고치면 새 실행으로 인식됩니다.)
 - `temperature: 0.2`, `responseMimeType: "application/json"`, flash 계열은 `thinkingBudget: 0` →
-  **결정적이고 일관된 JSON**을 받기 위함(채점 작업엔 추론 토큰 이득이 적고 지연만 늘어남).
+  결정적이고 일관된 JSON 확보.
 - 실패 시 **지수 백오프 재시도**(최대 3회) → 일시적 429/503에 견딤.
-- 코드: `netlify/functions/gemini.js`의 `buildEvaluatePrompt()`, `callGemini()`.
+- 코드: `buildEvaluatePrompt()`, `normalizeItemEvaluation()`, `callGemini()` in `netlify/functions/gemini.js`.
 
-> **V4(이미지)가 특별한 이유:** 본문에 사진·영상 언급이 전혀 없으면 V4는 `skipped`(N/A)
-> 처리됩니다. 단, 학생이 실제 이미지를 첨부하면 AI가 그 이미지를 직접 분석해 반드시 점수를 줍니다.
+### N/A — 추측하지 않고 비워 둔다
 
-### 2) 1~5점에 보정을 더해 50점으로 바꾸는 최종 산출식 (3단계)
+자료 안에 판단 단서가 없는 항목은 점수를 **지어내지 않고** `score: null, na: true`로 두고,
+**왜 판단할 수 없었는지**를 학생이 읽을 수 있게 남깁니다.
 
-```
-1단계  corrected_i = clamp( aiScore_i + correction_i , 1 , 5 )     // aiScore_i가 null이면 null
-2단계  finalScore  = round( mean( corrected_i where ≠ null ) × 10 , 소수 1자리 )   // 10~50점
-```
-- `aiScore_i` : AI가 준 V_i의 1~5점 (N/A는 null)
-- `correction_i` : ②에서 만든 그 항목의 보정값(−1.0~+1.0, 미달 시 0)
-- 가중치(μ) 없이 **단순 평균 × 10**. V4가 N/A면 나머지 4개 평균 × 10(자동 재정규화).
-  유효 항목이 0개면 0점. 코드: `applyCorrections()`, `computeFinalScore()`.
+- AI가 응답에서 아예 빠뜨린 항목도 **평균값으로 채우지 않고** N/A 처리합니다.
+  (v4.0에서는 누락 차원을 다른 차원의 평균으로 메웠는데, 근거 없는 점수를 만드는 셈이라 없앴습니다.)
+- N/A 항목은 **원점수에서도 만점에서도 제외**됩니다 (③ 참고).
+- 결과 화면은 N/A 항목마다 사유를 그대로 노출하고, "직접 조사해보라"고 안내합니다.
+- 코드: `normalizeItemResults()` in `src/utils/hpfm.js`.
 
-**왜 가중평균이 아니라 "보정 후 단순 평균 × 10"인가:**
-1. **교사 기준 정박** — AI는 학생 체크리스트로 채점하므로 학생의 체계적 편차를 승계합니다.
-   그 편차(보정값)를 더해 **교사 기준점에 맞춘** 점수를 얻습니다(rater calibration).
-2. **설명 가능성** — "AI 점수 + 교사와의 평균 차이"는 비전공자도 한 줄로 이해할 수 있습니다.
-3. **덧셈 보정(곱셈 아님)** — 리커트 척도는 비율 연산이 불가하고 저점수에서 계수가 폭발하므로,
-   ±점수의 가감으로만 보정합니다.
+### ⚠️ AI의 인식 한계를 숨기지 않는다
 
-### 3) 등급과 과락 — 점수를 어떻게 읽나
+AI는 **입력된 언론사·작성일·링크를 검증 없이 사실로 전제**하고 채점합니다. 웹 검색을 하지
+않으므로 그 매체가 실재하는지, 날짜가 맞는지, 링크가 살아 있는지 확인할 수 없습니다.
 
-총점을 4개 신뢰 등급(band)으로 나누고, 총점과 별개로 **개별 항목 과락**을 함께 경고합니다.
+프롬프트에도 이 제약을 명시해, AI가 "○○일보에 확인한 결과"처럼 **실제로 하지 않은 검증을
+했다고 쓰지 않도록** 지시합니다. 그리고 결과 화면에는 다음 고지가 **항상** 표시됩니다.
 
-| 최종 점수 | 등급(key) | 의미 |
-|---|---|---|
-| 40 이상 | `high` (신뢰 높음) | 신뢰도가 높은 미디어 |
-| 30 ~ 40 | `caution` (주의) | 일부 항목 확인 필요 |
-| 20 ~ 30 | `low` (신뢰 낮음) | 팩트체크 경고 |
-| 20 미만 | `veryLow` (매우 낮음) | 신뢰하기 어려움 |
+> "AI는 입력된 출처 정보를 그대로 전제하고 판단했으며, 해당 매체가 실재하는지,
+> 작성일이 정확한지는 확인하지 못했습니다."
 
-- **컷 30점**의 근거: 전 항목 평균 3점('보통')에 해당하는 준거참조(criterion-referenced) 기준.
-- **과락 규칙:** 보정 후 어떤 항목이 **2점 미만**이면 총점과 무관하게 `dimensionAlert`를 띄우고
-  해당 항목 코드를 함께 보여줍니다. 평균이 개별 결함(예: 출처가 심각히 부실)을 가리는 문제를
-  막기 위한 표준적 이중 기준입니다.
-- 코드: `SCORE_BANDS`, `scoreBand()`, `DIMENSION_FLOOR` in `src/utils/hpfm.js`.
-
-> v4.0에는 v3.0의 95% 신뢰구간(±오차범위)이 없습니다. 불확실성 표시는 σ에 의존했는데,
-> σ 자체를 걷어냈기 때문입니다. 대신 "보정 데이터가 아직 적다"는 사실을 결과 화면에 명시적으로
-> 안내합니다(항목별 3건 미만이면 보정 없이 AI 점수 그대로 계산).
+**이건 버그가 아니라 수업에서 다루는 학습 내용입니다.** 숨기면 학생이 AI가 하지도 않은
+검증을 했다고 착각하게 되고, 그건 이 수업이 막으려는 바로 그 습관입니다.
+코드: `AiLimitNotice` in `src/pages/student/ResultPage.jsx`, `MediaForm.jsx`, `FactCheckPage.jsx`.
 
 ---
 
-## 🟧 ④ 데이터가 쌓일수록 점수가 보정되는 원리
+## 🟨 ③ 점수 산출식 — 원점수·만점·백분율·등급·과락
 
-v4.0의 안정화 장치는 **"전량 평균 재계산 + 최소 건수 + 클램프"** 이 셋이 전부입니다.
-학습률·감쇠·단계 정책·σ는 없습니다.
-
-### 1) 보정값은 매번 전량 재계산된다 (누적 갱신이 아님)
-
-모델링을 저장할 때마다 그 워크스페이스의 **modeling 레코드 전체**에서 항목별 gap 평균을
-다시 구합니다. t번째 갱신 결과가 순서에 의존하던 v3.0과 달리, **순서 무관·멱등**입니다.
+### 산출식 (전부입니다)
 
 ```
-correction_i = clamp( mean( 모든 modeling gap_i ) , −1.0 , +1.0 )   (건수 ≥ 3)
-             = 0                                                     (건수 < 3)
+원점수  = Σ (각 항목의 점수)                    // N/A 항목은 더하지 않음
+만점    = 채점된 항목 수 × 5                    // N/A 항목은 분모에서도 제외
+백분율  = 원점수 ÷ 만점 × 100                   // 소수 1자리
 ```
-→ 모델링이 쌓일수록 평균이 안정되어 보정값이 **참 편차에 수렴**합니다. 한 번의 우연한
-채점이 전체를 흔들지 않습니다. (코드: `computeCorrections()`)
 
-### 2) 최소 건수 3건 — 표본이 적을 때의 과적합 방지
+평균도, 가중치도, 보정도 없습니다. 코드: `computeChecklistScore()` in `src/utils/hpfm.js`.
 
-항목별 모델링 건수가 3건 미만이면 그 항목은 보정하지 않고(0) AI 점수를 그대로 씁니다.
-**모든 항목이 3건 미만이면** 팩트체크 결과 화면에 "아직 기준 다듬기 데이터가 적어 보정 없이
-AI 점수를 그대로 계산했어요(항목별 3건 이상 필요)"라고 명시합니다.
-(코드: `countAppliedCorrections()`, `MIN_CALIBRATION_COUNT`.)
+**왜 합계인가:**
+1. **검산 가능성** — "왜 34점이죠?" → "4+3+5+2+... 다 더하면 34점." 학생이 손으로 확인할 수
+   있습니다. 검산할 수 있어야 의심할 수도 있고, 그게 비판적 사고의 출발점입니다.
+2. **도구와 결과의 직결** — 체크리스트가 허술하면 점수도 허술하게 나옵니다. 그 인과가 보여야
+   학생이 자기 도구를 고칩니다. 중간에 보정이 끼면 이 인과가 흐려집니다.
+3. **분석적 루브릭(analytic rubric)** — 항목별 독립 채점 후 합산은 교육평가의 표준 채점 방식입니다.
 
-### 3) 수용 / 정교화 — 보정값은 바꾸지 않는다
+### N/A를 만점에서 빼는 이유
 
-팩트체크 결과 화면(`ResultPage.jsx`)에서 학생은 둘 중 하나를 누릅니다.
-**둘 다 보정값을 바꾸지 않습니다**(교사 기준점이 없는 데이터이기 때문). training_data에
-기록만 남기고, **마스터리·피드백 카드 재계산에만** 사용합니다.
+> 항목 10개 중 2개가 N/A → 만점은 50점이 아니라 **40점**
 
-| 선택 | 학습 데이터 | 효과 |
+N/A를 만점에는 넣고 점수를 0으로 치면, "AI가 판단할 수 없었다"는 사실이 곧 **감점**이 됩니다.
+그건 자료의 신뢰도 문제가 아니라 **AI의 능력 한계**이므로 자료에 책임을 지울 수 없습니다.
+
+### ⚠️ 원점수는 모둠 간 비교에 쓸 수 없다
+
+문항 수가 모둠마다 다르므로 만점도 다릅니다.
+
+> 6문항 모둠 **28점** vs 12문항 모둠 **40점** → 원점수는 후자가 높지만 백분율은 **93% vs 67%**
+
+앱은 원점수와 백분율을 항상 함께 표시하고, 팩트체크 화면·결과 화면 양쪽에 이 안내를 띄웁니다.
+
+### 신뢰 등급 (band) — 백분율 기준
+
+| 백분율 | 등급(key) | 의미 |
 |---|---|---|
-| 🟢 **수용** | AI 점수 그대로 (`source: "accept"`) | 격차 ≈ 0으로 기록 → 마스터리·습관 분석 갱신 |
-| 🟡 **정교화** | 학생이 수정한 점수 (`source: "refine"`) | `학생−AI` 격차를 기록 → 습관 분석에 반영 (η×1.5 같은 가속 없음) |
+| **80% 이상** | `high` (신뢰 높음) | 체크리스트 기준을 대체로 충족 |
+| **60 ~ 80%** | `caution` (주의) | 일부 항목 추가 확인 필요 |
+| **40 ~ 60%** | `low` (신뢰 낮음) | 비판적 점검 강력 권장 (팩트체크 경고) |
+| **40% 미만** | `veryLow` (매우 낮음) | 신뢰하기 어려움 |
 
-- 보정값을 바꾸려면 **"기준 다듬기"에서 선생님 미디어를 채점**해야 합니다(교사 기준점 확보).
+> **왜 원점수가 아니라 백분율인가:** 만점이 모둠마다 다르므로 절대 점수 컷은 의미가 없습니다.
+> 백분율은 문항 수와 무관하게 "기준을 얼마나 충족했는가"를 나타내는 **준거참조
+> (criterion-referenced)** 지표입니다. (v4.0의 "40점 이상" 컷은 만점 50점 고정이라 성립했습니다.)
 
-### 4) 누적의 효과 — 마스터리와 피드백 카드
+- 코드: `PERCENT_BANDS`, `percentBand()` in `src/utils/hpfm.js`.
 
-쌓인 격차(gap) 기록 전체를 다시 훑어 두 가지를 갱신합니다.
+### 항목 과락 (v4.0에서 계승)
 
-```
-마스터리(V_i) = clamp( 1 − mean(|gap_i|) / 4 , 0 , 1 )     (해당 항목 gap이 없으면 '데이터 없음')
-```
-- 교사 기준과의 평균 격차가 작을수록 1에 가까워짐 → 학생 대시보드에서 약점 행동을 색으로 표시.
-- **피드백 카드**: 누적 gap의 평균/분산을 보고 "이 행동을 후하게/박하게/들쭉날쭉하게 준다"를
-  자동 진단(평균|gap|>0.5 → 편향, 분산>1.0 → 일관성 부족). 코드: `computeMastery()`, `generateFeedbackCards()`.
+**어떤 항목이 2점 미만**이면 총점과 무관하게 별도 경고(`itemAlert` + `alertIndexes`)를 띄웁니다.
 
-> **요약:** 모델링이 쌓이면 ① 항목별 gap 평균(보정값)이 참값에 수렴하고, ② 3건을 넘긴
-> 항목부터 보정이 켜지며, ③ 수용/정교화는 보정값을 건드리지 않고 습관 분석만 갱신하고,
-> ④ 마스터리·피드백으로 학생의 평가 습관 자체가 교정됩니다.
+> 예: 10개 항목 중 9개가 4점인데 "이 사이트 진짜야?"만 1점 → 총점 37/50 (74%, 주의)이지만
+> **"이 항목이 심각하게 미흡" 경고**가 따로 표시됩니다.
+
+합계는 개별 결함을 가립니다. 출처가 가짜면 나머지가 아무리 좋아도 그 자료는 신뢰할 수
+없으므로, "총점 등급 + 개별 과락"의 이중 기준을 함께 봅니다.
+- 코드: `ITEM_FLOOR` in `src/utils/hpfm.js`.
+
+### 지표별 평균 (표시 전용)
+
+항목 점수를 5대 검증 행동으로 묶어 평균낸 값을 결과 화면 사이드바와 대시보드에 표시합니다.
+**총점 계산에는 전혀 관여하지 않습니다.** V6(사용자 정의) 항목과 N/A 항목은 이 평균에서
+제외됩니다(`Number(null) === 0` 함정을 피하려 null 체크를 먼저 합니다).
+- 코드: `aggregateItemsToDimensions()`, `averageDimensionMaps()` in `src/utils/hpfm.js`.
 
 ---
+
+## 🟧 ④ 미디어 자료 — 등록 주체와 접근 격리
+
+v5.0에서 자료 등록 주체가 둘로 늘고, 자료 스키마가 확장되었습니다.
+
+### 스키마
+
+| 필드 | 설명 |
+|---|---|
+| `title` | 표제 **(필수)** |
+| `subtitle` | 부제 |
+| `content` | 본문 **(필수)** |
+| `imageUrl` | 이미지 (v4.0의 `thumbnailUrl`을 대체 — 읽을 때는 `mediaImageUrl()`이 둘 다 봄) |
+| `publishedAt` | 작성일 `"YYYY-MM-DD"` 문자열 — **검증하지 않음** |
+| `publisher` | 언론사 — **검증하지 않음** |
+| `link` | 원본 링크 — **검증하지 않음** |
+| `registeredBy` | `"teacher"` \| `"group"` |
+| `groupId` | 모둠 등록 시 그 모둠 id (교사 자료는 `null`) |
+| `isRequired` | 교사 등록 자료는 `true` (학급 공통 필수) |
+| `uploadedBy` / `uploadedByName` | 등록자 uid / 표시 이름 |
+
+> `publisher`·`publishedAt`·`link`를 검증하지 않는 것은 **의도된 설계**입니다. 등록 폼과 결과
+> 화면 양쪽에서 "이 값은 검증되지 않으며 AI도 그대로 전제한다"고 명시합니다(②의 고지 참고).
+
+### 등록 주체와 열람 범위
+
+| 등록 주체 | 등록·수정·삭제 | 열람·평가 | 화면 |
+|---|---|---|---|
+| **교사** (`registeredBy: "teacher"`) | 교사만 | **전 학급** — 모든 모둠 | `/teacher/upload`, `/teacher/edit/:id` |
+| **모둠** (`registeredBy: "group"`) | 그 모둠 **조장**만 (`groups/{gid}.leaderUid`) | **그 모둠만** | `/student/group-media` |
+
+조장 판정은 화면에서도 하지만, **실제 경계는 `firestore.rules`** 입니다. 다른 모둠은 데이터
+자체를 읽을 수 없습니다.
+
+### ⚠️ 규칙은 쿼리 필터가 아니다 (중요한 구현 제약)
+
+Firestore 보안 규칙은 결과를 걸러주지 않습니다. **목록 쿼리가 읽을 수 없는 문서를 하나라도
+포함하면 쿼리 전체가 실패**합니다. 그래서 클라이언트는 반드시 좁혀서 조회합니다.
+
+```js
+listTeacherMediaItems()      // where("registeredBy", "==", "teacher")
+listGroupMediaItems(groupId) // where("groupId", "==", groupId)   ← 모둠 작업실일 때만 호출
+listMediaItemsByUploader(uid)// where("uploadedBy", "==", uid)    ← 교사 대시보드
+```
+
+`where` + `orderBy` 조합은 복합 인덱스를 요구해 배포 단계가 늘어나므로, **정렬은 클라이언트에서**
+처리합니다(학급 단위라 문서 수가 적습니다). 코드: `src/services/firestore.js`.
+
+### 이미지 저장 경로
+
+교사·모둠 자료 모두 `media_thumbnails/{uid}/` 에 업로드합니다(`uploadMediaImage`).
+Storage 규칙이 "본인 uid 경로에만 쓰기, 10MB 이하 이미지"라 조장이 올려도 그대로 통과하며,
+**`storage.rules` 변경은 필요하지 않습니다.**
+
 
 ## 🟪 ⑤ 직접 구축하기 — Firebase / Firestore / Storage
 
@@ -369,8 +402,12 @@ firebase deploy --only firestore:rules,storage:rules
 
 #### 적용되는 Firestore 규칙 (`firestore.rules` 전문)
 
-핵심 원칙: **학생은 자기 데이터(`users/{본인uid}`)만**, **교사 역할(`role=="teacher"`)만 미디어 등록/평가**,
-**모둠 데이터는 멤버만** 읽고 씁니다.
+핵심 원칙: **학생은 자기 데이터(`users/{본인uid}`)만**, **미디어 등록은 교사(공통 자료) 또는
+모둠 조장(모둠 자료)만**, **모둠 데이터는 멤버만** 읽고 씁니다.
+
+> ⚠️ 아래 규칙에서 `media_items`의 `read`는 **쿼리를 걸러주지 않습니다.** 모둠 자료가 섞인
+> 전체 목록 쿼리는 통째로 실패하므로, 클라이언트는 반드시 `registeredBy` / `groupId`로 좁혀
+> 조회해야 합니다 (④장 참고).
 
 ```js
 rules_version = '2';
@@ -421,28 +458,52 @@ service cloud.firestore {
       allow delete: if false;
 
       match /checklists/{checklistId}        { allow read, write: if isSelf(uid); }
-      match /algorithm_model/{docId} {
-        allow read, write: if isSelf(uid);
-        match /training_data/{dataId}        { allow read, write: if isSelf(uid); }
-      }
-      match /feedback_cards/{cardId}         { allow read, write: if isSelf(uid); }
       match /factcheck_history/{historyId}   { allow read, write: if isSelf(uid); }
+      // v5.0에서 algorithm_model / training_data / feedback_cards 규칙 제거(보정·마스터리 폐기)
     }
 
-    // ====== media_items/{mediaId} : 교사가 등록한 미디어 ======
+    // ====== media_items/{mediaId} : 미디어 자료 (교사 공통 / 모둠 전용) ======
     match /media_items/{mediaId} {
-      allow read: if isSignedIn();                 // 학생도 목록/본문 열람
-      allow create: if isTeacher()
-                    && request.resource.data.uploadedBy == request.auth.uid;
-      allow update, delete: if isTeacher();
+      function isGroupMedia() {
+        return 'registeredBy' in resource.data && resource.data.registeredBy == "group";
+      }
 
-      match /teacher_evaluation/{docId} {
-        allow read:  if isSignedIn();              // 학생 모델링이 읽어야 함
-        allow write: if isTeacher();
-      }
-      match /student_evaluations/{evalUid} {
-        allow read, write: if isSelf(evalUid);     // 미디어×학생 본인 1건
-      }
+      // 교사·레거시 자료는 로그인 사용자 전체 / 모둠 자료는 그 모둠원(+교사)만
+      allow read: if isSignedIn()
+                  && ( !isGroupMedia()
+                       || isGroupMember(resource.data.groupId)
+                       || isTeacher() );
+
+      // 교사 등록: 공통 필수 자료로만
+      allow create: if isTeacher()
+                    && request.resource.data.uploadedBy == request.auth.uid
+                    && request.resource.data.registeredBy == "teacher"
+                    && request.resource.data.isRequired == true;
+
+      // 모둠 등록: 그 모둠 조장만, 자기 모둠 id로만
+      allow create: if isSignedIn()
+                    && request.resource.data.uploadedBy == request.auth.uid
+                    && request.resource.data.registeredBy == "group"
+                    && request.resource.data.groupId is string
+                    && isGroupLeader(request.resource.data.groupId)
+                    && request.resource.data.isRequired == false;
+
+      // 수정: 등록 주체(registeredBy/groupId) 불변. 단 레거시 문서 백필은 교사에게 1회 허용
+      allow update: if ( isTeacher() || (isGroupMedia() && isGroupLeader(resource.data.groupId)) )
+                    && (
+                         ( 'registeredBy' in resource.data
+                           && request.resource.data.registeredBy == resource.data.registeredBy
+                           && request.resource.data.groupId == resource.data.groupId )
+                         || ( isTeacher()
+                              && !('registeredBy' in resource.data)
+                              && request.resource.data.registeredBy == "teacher" )
+                       );
+
+      allow delete: if isTeacher()
+                    || (isGroupMedia() && isGroupLeader(resource.data.groupId));
+
+      // v5.0에서 teacher_evaluation / student_evaluations 규칙 제거
+      // (교사 채점이 학생 점수에 개입하는 경로를 없앴음)
     }
 
     // ====== groups/{groupId} : 모둠 협업 작업실 ======
@@ -460,13 +521,9 @@ service cloud.firestore {
         allow delete: if isSelf(memberUid) || isGroupLeader(groupId);
       }
       match /checklists/{checklistId}        { allow read, write: if isGroupMember(groupId); }
-      match /algorithm_model/{docId} {
-        allow read, write: if isGroupMember(groupId);
-        match /training_data/{dataId}        { allow read, write: if isGroupMember(groupId); }
-      }
-      match /feedback_cards/{cardId}         { allow read, write: if isGroupMember(groupId); }
       match /factcheck_history/{historyId}   { allow read, write: if isGroupMember(groupId); }
       match /factcheck_runs/{runKey}         { allow read, write: if isGroupMember(groupId); }
+      // v5.0에서 algorithm_model / feedback_cards 규칙 제거
     }
 
     // 그 외 모든 경로 차단
@@ -637,11 +694,127 @@ netlify dev            # http://localhost:8888  (Gemini Function 포함)
 
 ---
 
-## 🗄️ Firestore 데이터 구조 (VAPM-4.0)
+## 🎒 수업 활동 — 4단계 순차 게이트
 
-> 워크스페이스는 개인(`users/{uid}`)과 모둠(`groups/{groupId}`) 두 종류이며, 학습 관련
-> 서브컬렉션 구조는 동일합니다. 모델 버전 상수(`version`, `standard_basis`)는
-> **`src/constants/model.js` 단일 출처**에서 채워집니다.
+한 차시 수업을 그대로 담은 **모둠 작업실 전용** 흐름입니다. 앞 단계를 마쳐야 다음 단계가 열립니다.
+(개인 작업실은 기존 자유 팩트체크를 그대로 씁니다 — 조장 등록·블라인드 채점·제출 현황판이 모두
+모둠을 전제하기 때문입니다.)
+
+```
+① 지표 할당  →  ② 자료 등록  →  ③ 블라인드 채점  →  ④ AI 판정·비교
+   /student/lesson/assign  /media  /blind  /reveal · /dashboard
+```
+
+### ① 지표 할당 — AI 제안을 기본값으로 두지 않는다
+
+체크리스트 항목을 학생이 직접 V1~V5에 배정합니다.
+
+- **AI 제안은 참고 표시일 뿐, 기본 선택으로 찍히지 않습니다.** 진입 시 기존 `dimension`(AI가
+  채워둔 값)을 `aiSuggestedDimension`으로 옮기고 `dimension`은 비웁니다(`splitAiSuggestion`).
+  이렇게 하지 않으면 학생이 그대로 넘겨버려 배정 활동 자체가 성립하지 않습니다.
+  **Gemini 재호출은 없습니다** — 기존 분류를 재활용합니다.
+- AI 제안과 다르게 고른 항목은 별도 표시되고 **"왜 다르게 판단했는가"** 서술이 필수입니다.
+- **문항이 0개인 지표**는 곧바로 보충하지 못합니다. `STEP 1` 빠뜨린 이유를 기록·저장해야
+  `STEP 2` 보충 문항 입력이 열립니다. 기록은 `groups/{gid}/reflections/{Vn}`에 저장되고
+  **교사가 열람**합니다.
+- **1문항 지표는 통과**시키되 "그 항목 하나가 지표 점수를 그대로 결정하므로 결과가 흔들리기
+  쉽다"는 경고를 띄우고 2문항 이상을 권고합니다.
+- **게이트:** 5개 지표 모두 1문항 이상 + 전 항목 배정 완료 + 불일치 사유 작성 완료
+
+### ② 자료 등록 — 판단이 갈릴 자료를 고른다
+
+- 교사 공통 필수 자료를 먼저 보여줍니다(읽기 전용). 교사가 아직 등록 전이면 게이트가 잠깁니다.
+- **모둠 조장만** 자료 1건을 등록합니다. 모둠원은 열람만 가능합니다.
+- 등록 화면에 선정 기준을 명시합니다 — *"가짜 같은 자료가 아니라, 모둠원끼리 판단이 갈릴 것
+  같은 자료를 고르세요."*
+- **게이트:** 교사 자료 1건 + 모둠 자료 1건, 그리고 **조장만** 다음 단계를 엽니다.
+
+### ③ 블라인드 채점 — AI를 아예 호출하지 않는다
+
+- 모둠원이 각자 **모둠 공통 체크리스트**로 두 자료를 항목별 채점합니다.
+- **이 단계에서 AI는 호출되지 않습니다.** 미리 만들어 화면에서 가리는 방식이 아니라,
+  학생 제출이 끝난 뒤에 비로소 호출하는 구조입니다(`runLessonAi`는 4단계에서만 실행).
+- 제출하면 `locked: true`로 **잠기고 제출 시각이 서버 시간으로 기록**됩니다. 재제출은
+  트랜잭션과 보안 규칙 양쪽에서 거부됩니다.
+- 대기 화면에 정박 효과 설명을 한 문단 노출합니다.
+- 3단계 진입 시 체크리스트를 `progress.checklistSnapshot`으로 **동결**합니다. 이후 항목을
+  고쳐도 채점·통계 기준이 흔들리지 않습니다.
+- 전원 제출 시 자동으로 4단계가 열립니다.
+
+### ④ AI 판정·비교
+
+**A. AI 판정 안내판** (`/student/lesson/reveal`) — 자료당 Gemini 1회 호출(single-flight),
+모둠원이 각자 기기에서 실시간으로 함께 봅니다.
+
+- 항목별 **AI 점수 · 판단 근거 문장 · N/A와 그 사유**를 모두 표시
+- **출처 정보 고지**(§②)를 화면 상단에 상시 노출
+- **내 점수 vs AI 점수**를 나란히, `|차이| ≥ 2`는 강조
+- 차이 항목마다 원인 유형 4가지를 **우열 없이 대등하게** 배치하고 서술을 받습니다
+  (`|차이| ≥ 2`는 필수, 1점은 선택)
+
+| | 원인 유형 |
+|---|---|
+| ① | 자료 해석의 차이 |
+| ② | 우리 체크리스트 문항이 모호함 |
+| ③ | AI가 실제로 확인할 수 없는 항목 |
+| ④ | 정답이 없는 가치 판단 영역 |
+
+**B. 비교 대시보드** (`/student/lesson/dashboard`) — 지표별 통계는 **네 값을 함께** 봅니다.
+
+| 지표 | 정의 | 역할 |
+|---|---|---|
+| **차이 절댓값 평균** | `mean(｜학생−AI｜)` | **기본 정렬 기준.** 작을수록 일치 |
+| **부호 있는 평균** | `mean(학생−AI)` | 후하게/박하게 봤는지 (보조) |
+| **중앙값** | `median(학생−AI)` | 평균과 벌어지면 "한 명이 유독 다르게 봄" |
+| **모둠원 표준편차** | 항목별 학생 점수 표준편차의 평균 | AI와 무관하게 모둠원끼리 갈렸는지 |
+
+> ⚠️ **부호 평균만 쓰면 안 되는 이유:** AI 3점에 모둠원이 5·5·1·1을 주면 부호 평균은 **0**이라
+> "완전 일치"로 읽히지만, 절댓값 평균은 **2.0** — 한 명도 AI와 같지 않았습니다. `+2`와 `−2`가
+> 서로 지운 것입니다. 이 경우 🔴 **상쇄 경고**가 뜹니다.
+
+- **절사평균(trimmed mean)은 쓰지 않습니다.** 표본이 모둠원 3~5명이라 최대·최소를 자르면
+  관측치 절반이 사라지고, 한 명이 크게 다르게 본 사실 자체가 가장 중요한 신호이기 때문입니다.
+- **N/A 항목은 차이 통계에서 제외**합니다. 다만 모둠원 표준편차는 AI와 무관하므로 N/A 항목도
+  포함해 계산합니다(AI가 전부 N/A를 낸 지표에서도 모둠원이 갈렸는지 보기 위해).
+- **모둠 내 편차 뷰** — 같은 항목에 모둠원이 각각 몇 점을 줬는지 원자료 그대로 표시
+- **원인 유형 지표별 분포** · **CSV 내보내기**(학생별·항목별 원점수 + 원인 유형 + 성찰 답변,
+  한글 Excel용 UTF-8 BOM 포함)
+- **미제출로 제외된 학생 수가 화면에 표시**됩니다.
+
+**C. 성찰 답변** — 대시보드 하단 서술형 3문항. 2)·3)은 자기 모둠 수치를 최소 하나 인용하도록
+안내하고, 숫자가 없으면 부드러운 경고만 띄웁니다(제출은 가능).
+
+**D. 교사용 학급 집계** (`/teacher/class-stats`) — **교사 등록 공통 자료 한정**으로 지표별
+절댓값 평균과 원인 유형 분포를 학급 전체로 모읍니다.
+
+> ℹ️ 모둠마다 체크리스트가 다르므로 이 수치는 *"각 모둠이 **자기 도구로** 채점했을 때 AI와
+> 얼마나 벌어졌는가"*를 지표 단위로 모은 값입니다. **모둠 간 우열 비교가 아니라 어떤 지표가
+> 사람 판단을 요구하는가**를 읽는 자료입니다.
+
+### 교사 화면 — 진행 현황판 (`/teacher/progress`)
+
+모둠별 단계·제출 현황을 보고, 미제출자가 있어도 **[미제출자 제외하고 진행]**으로 다음 단계를
+열 수 있습니다. 제외된 학생은 `progress.stage3.excludedUids`에 기록되어 이후 통계에서 빠지고,
+**그 사실이 모둠 대시보드와 학급 집계에 표시**됩니다. 모둠 상세에서 지표 배정 결과 · AI 불일치
+사유 · 빠뜨린 지표 성찰 · 성찰 답변 · 원인 유형 기록을 열람합니다.
+
+### 순수 함수와 테스트
+
+게이트 판정과 통계는 화면에서 분리해 순수 함수로 두고 단위 테스트로 고정했습니다.
+
+| 모듈 | 내용 |
+|---|---|
+| `src/utils/lessonGates.js` | `splitAiSuggestion` · `assignGate` · `mediaGate` · `submissionStatus` |
+| `src/utils/lessonStats.js` | `computeDimensionStats` · `buildScoreMatrix` · `aggregateCauseTags` · `computeClassStats` · `buildCsv` |
+
+---
+
+## 🗄️ Firestore 데이터 구조 (VAPM-5.0)
+
+> 워크스페이스는 개인(`users/{uid}`)과 모둠(`groups/{groupId}`) 두 종류이며, 서브컬렉션
+> 구조는 동일합니다. 모델 버전 상수(`version`, `standard_basis`)는
+> **`src/constants/model.js` 단일 출처**에서 채워집니다
+> (v5.0: `MODEL_VERSION = "VAPM-5.0"`, `STANDARD_BASIS = "student_checklist_items"`).
 
 ```
 config/teacher                                              // 교사 인증 코드 게이트(프로젝트 단위)
@@ -650,47 +823,229 @@ config/teacher                                              // 교사 인증 코
 users/{uid}
   role, email, displayName, photoURL, createdAt, lastLogin
   groups: { [groupId]: { role, groupName, joinedAt } }      // 소속 모둠
-  checklists/{checklistId}
-    checklistName, items[{ question, score|rubric,
-                           dimension(V1~V6), dimensionConfidence }]
-  algorithm_model/current
-    version, standard_basis,
-    corrections: { V1:{value,count}, ..., V5:{value,count} },  // value: 보정값(−1.0~+1.0), count: 반영 modeling 건수
-    mastery: { V1..V5: 0~1 | null },
-    checklistId, trainingDataCount, trainedAt
-    training_data/{dataId}                                   // 결정적 id로 upsert
-      studentDimensionScores, teacherDimensionScores, gap,
-      source: "modeling" | "accept" | "refine"              // 보정값은 modeling만 사용
-  feedback_cards/current
-    cards[{ dimension, dimensionName, type, diagnosis, detail, suggestion, stats }]
+  checklists/{checklistId}                                  // ★ 점수의 유일한 근거
+    checklistName,
+    items[{ question, rubric{1..5},
+            dimension(V1~V6), dimensionConfidence,          // 표시용 라벨(점수 계산에 미사용)
+            dimensionMapKey }]                              // 매핑 캐시 키(질문 텍스트)
+    lastEditedBy, lastEditedName, createdAt, updatedAt
   factcheck_history/{historyId}
-    version, standard_basis,
-    media{ title, content, link, imageUrl }, checklistId, checklistSnapshot,
-    dimensionScores(V4=null이면 N/A; AI 원점수, 보정 전), dimensionReasons, dimensionRedFlags, dimensionSkipped,
-    correctionsSnapshot, correctedDimensionScores, totalScore, band, dimensionAlert, alertDimensions,
-    accepted, refined, finalDimensionScores, finalTotalScore
-    // ⚠️ 3.0 문서(weightsSnapshot/variance/confidenceInterval95)는 읽기 전용 하위호환:
-    //    옛 필드는 무시하고 totalScore만 표시한다.
+    version("VAPM-5.0"), standard_basis,
+    media{ title, subtitle, content, link, imageUrl,
+           publisher, publishedAt, mediaItemId },           // publisher/publishedAt은 미검증 입력값
+    checklistId, checklistName, checklistSnapshot[],        // 실행 시점 항목 스냅샷
+    itemResults[{ index, question, dimension,
+                  score(1~5 | null), na, reason, redFlags[] }],
+    rawScore, maxScore, percent, band,                      // 원점수 / 만점 / 백분율 / 등급
+    scoredCount, naCount, itemAlert, alertIndexes[],        // 채점 항목 수 / N/A 수 / 과락
+    dimensionAverages{ V1..V5: number|null },               // 표시 전용(총점 무관)
+    createdByUid, createdByName, createdAt
 
-media_items/{mediaId}                                        // 교사가 등록(전역)
-  title, content, link, thumbnailUrl, uploadedBy, createdAt
-  teacher_evaluation/default                                 // 학생 학습의 "정답지"
-    items[{ question, score, dimension, verification_action? }], totalScore, dimensionScores
-  student_evaluations/{uid}
-    items[], checklistId, dimensionScores, updatedAt
+media_items/{mediaId}                                        // 교사 공통 자료 + 모둠 전용 자료
+  title, subtitle, content, imageUrl, publishedAt, publisher, link,
+  registeredBy("teacher"|"group"), groupId(모둠 등록 시), isRequired(교사=true),
+  uploadedBy, uploadedByName, createdAt, updatedAt
+  // v4.0의 thumbnailUrl은 남아 있어도 mediaImageUrl()이 imageUrl과 함께 읽는다
 
 groups/{groupId}                                             // 모둠 협업 작업실
   groupName, leaderUid, leaderName, shareCode, checklistId, createdAt, updatedAt
   members/{uid} { name, email, role, joinedAt }
-  checklists / algorithm_model / feedback_cards / factcheck_history   // users와 동일 구조
+  checklists / factcheck_history                             // users와 동일 구조
   factcheck_runs/{runKey}                                    // single-flight 실행 조정
     status("running"|"done"), claimedByUid, claimedByName, startedAt, historyId
+
+  // ===== 수업 활동(4단계 순차 게이트) — 모둠 작업실에만 존재 =====
+  progress/current
+    stage(1~4), checklistId, checklistSnapshot[],            // 3단계 진입 시 동결
+    stage1{completedAt, completedBy}, stage2{...},
+    stage3{includedUids[], excludedUids[], forcedBy, closedAt},
+    stage4{aiHistoryIds:{[mediaId]:historyId}, aiRunAt}
+  reflections/{V1..V5}                                       // ① 빠뜨린 지표 성찰(교사 열람)
+    dimension, reason, writtenBy, writtenByName, updatedAt
+  blind_scores/{uid}__{mediaId}                              // ③ 블라인드 점수(제출 시 잠금)
+    uid, name, mediaId, checklistId, scores{itemIndex:1~5},
+    submitted, locked, submittedAt
+  cause_tags/{uid}__{mediaId}                                // ④ 원인 유형 + 서술
+    uid, name, mediaId, items{ itemIndex:{type, note} }
+  reflection_answers/{uid}                                   // ④ 성찰 3문항
+    uid, name, answers{q1,q2,q3}, submittedAt
+
+  // 체크리스트 항목은 ①단계에서 AI 제안과 학생 선택이 분리된다
+  //   items[{ question, rubric,
+  //           aiSuggestedDimension, aiConfidence, aiReason,   ← AI 제안(참고용)
+  //           dimension,                                       ← 학생 최종 선택
+  //           disagreeReason, assignedBy, addedInStage1 }]
 ```
 
-> **3.0 → 4.0 레이지 마이그레이션:** 모델 문서를 로드할 때 `version`이 `VAPM-4.0`이 아니거나
-> `corrections`가 없으면, `training_data`의 `source == "modeling"` 레코드(각 레코드에 저장된 `gap`)로
-> `computeCorrections()`를 실행해 새 스키마로 문서를 덮어씁니다(개인·모둠 동일). 별도 일괄
-> 마이그레이션 스크립트는 없습니다. 코드: `getAlgorithmModel()` in `src/services/firestore.js`.
+### v5.0에서 사라진 것
+
+| 삭제 | 이유 |
+|---|---|
+| `users|groups/*/algorithm_model/current` (+ `training_data`) | 보정값·마스터리·학습 데이터 폐기 |
+| `users|groups/*/feedback_cards/current` | 교사 격차 기반 진단 카드 폐기 |
+| `media_items/*/teacher_evaluation/default` | 교사 정답지 폐기 |
+| `media_items/*/student_evaluations/{uid}` | 모델링(기준 다듬기) 폐기 |
+
+기존 문서를 자동으로 지우지는 않지만, **코드에서 접근하지 않고 보안 규칙에서도 제거**되어
+읽기·쓰기가 모두 거부됩니다. 정리하고 싶다면 Firebase 콘솔에서 수동 삭제하세요.
+
+---
+
+## 🔄 v4.0 → v5.0 마이그레이션
+
+코드를 새 버전으로 배포한 뒤 해야 할 일은 **두 가지**입니다.
+
+### 1. 보안 규칙 재배포 (필수)
+
+`media_items` 규칙이 크게 바뀌었습니다. 배포하지 않으면 모둠 자료 등록이 `permission-denied`로 실패합니다.
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+### 2. 교사 계정으로 대시보드 1회 방문 (필수)
+
+v4.0 이전에 등록된 미디어 자료에는 `registeredBy` 필드가 없습니다. 학생 화면은
+`where("registeredBy","==","teacher")`로 좁혀 조회하므로, **백필하지 않으면 기존 자료가
+학생 목록에서 사라집니다.**
+
+교사가 `/teacher`에 들어오면 `backfillLegacyMediaItems()`가 자동으로 실행되어
+`registeredBy: "teacher"`, `isRequired: true`, `imageUrl`(옛 `thumbnailUrl`에서 승계)을 채웁니다.
+- 이미 채워진 문서는 건드리지 않아 **재진입해도 쓰기가 발생하지 않습니다**(멱등).
+- 보정된 건수는 대시보드 상단에 안내 배너로 표시됩니다.
+- 코드: `backfillLegacyMediaItems()` in `src/services/firestore.js`.
+
+> ⚠️ 여러 교사 계정이 각자 자료를 올렸다면, **각 교사가 한 번씩** 대시보드에 들어와야 합니다
+> (백필 쿼리가 `uploadedBy == 본인 uid`로 좁혀져 있음).
+
+### 기존 팩트체크 기록은?
+
+`factcheck_history` 문서는 **그대로 보존**되며 읽기 전용으로 표시됩니다.
+`itemResults` 필드가 없으면 v4.0 기록으로 판정해, 결과 화면이 "이전 버전(v4.0) 기록" 배너와
+함께 당시 저장된 검증 행동별 점수·50점 총점을 그대로 보여줍니다. 다시 계산하지 않습니다.
+- 코드: `LegacyResultView` in `src/pages/student/ResultPage.jsx`.
+
+### 데이터 마이그레이션은 없습니다
+
+v4.0 기록을 v5.0 형식으로 변환하는 스크립트는 **의도적으로 만들지 않았습니다.** 채점 단위가
+"5대 검증 행동 5개"에서 "체크리스트 항목 N개"로 바뀌어 **1:1 대응이 존재하지 않기 때문**입니다.
+같은 자료를 새 방식으로 보려면 팩트체크 화면의 '기존 자료 불러오기'로 다시 실행하세요.
+
+옛 데이터를 남겨두지 않고 **깨끗이 초기화**하고 싶다면 아래 초기화 스크립트를 사용하세요.
+
+---
+
+## 🧹 v5.0 데이터 초기화 (관리자용)
+
+계산 방식이 바뀌어 기존 평가 데이터가 더 이상 유효하지 않을 때,
+**학생·모둠이 작성한 체크리스트만 보존하고** 나머지 평가 데이터를 지우는 스크립트입니다.
+
+```
+scripts/reset-v5.mjs
+```
+
+### 보존 / 삭제 범위
+
+| | 경로 | 비고 |
+|---|---|---|
+| ✅ 보존 | `users/{uid}` · `groups/{gid}` | 계정·모둠 문서 자체 |
+| ✅ 보존 | `users/{uid}/checklists` · `groups/{gid}/checklists` | 문항·루브릭·**지표 매핑 캐시** |
+| ✅ 보존 | `groups/{gid}/members` | 모둠원 명단 |
+| ✅ 보존 | `config/teacher` | 교사 인증 코드 |
+| ❌ 삭제 | `media_items` | 하위 `teacher_evaluation`·`student_evaluations` 포함 |
+| ❌ 삭제 | `users\|groups/{id}/factcheck_history` | 팩트체크 기록 |
+| ❌ 삭제 | `users\|groups/{id}/algorithm_model` | 하위 `training_data` 포함 |
+| ❌ 삭제 | `users\|groups/{id}/feedback_cards` | |
+| ❌ 삭제 | `groups/{gid}/factcheck_runs` | single-flight 조정 문서 |
+| ❌ 삭제 | Storage `media_thumbnails/` · `factcheck_images/` | |
+
+> 💡 **"질문 → 지표 매핑 캐시"는 별도 컬렉션이 아닙니다.** `dimension`, `dimensionConfidence`,
+> `dimensionReason`, `dimensionMapKey`가 **체크리스트 항목 안에** 저장되므로
+> (`src/utils/mappingCache.js`), 체크리스트를 보존하면 매핑도 그대로 남습니다.
+> 초기화 후에도 **재분류 Gemini 호출은 발생하지 않습니다.**
+
+### 준비 — 서비스 계정 키
+
+이 스크립트는 클라이언트 SDK가 아니라 **Firebase Admin SDK**로 동작하며, 보안 규칙을 우회하는
+관리자 권한을 씁니다.
+
+1. Firebase 콘솔 → **프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성** → JSON 다운로드
+2. 저장소 밖 안전한 위치에 두거나, 저장소 안에 둔다면 파일명을 `serviceAccount*.json` 형태로
+   (`.gitignore`에 이미 등록되어 있습니다)
+
+> 🔐 **서비스 계정 키는 프로젝트 전체를 삭제할 수 있는 권한입니다.** 절대 커밋하거나 공유하지 마세요.
+
+### 1) 먼저 dry-run (기본값)
+
+```bash
+npm run reset:dry-run -- --key ./serviceAccount.json
+# 또는
+node scripts/reset-v5.mjs --key ./serviceAccount.json
+```
+
+보존 대상 요약 → 삭제 대상 경로별 건수 → 합계를 출력하고 **아무것도 지우지 않습니다.**
+
+```
+── 보존 (건드리지 않음) ─────────────────────────────────
+   users 계정 문서                : 27개
+   users/*/checklists             : 25개 (항목 183개)
+   └ 지표 매핑이 붙은 항목        : 183개  ← 재분류 API 호출 불필요
+
+── 삭제 대상 ────────────────────────────────────────────
+   경로                                수  단위
+   media_items                        14  문서
+   users/aBc.../factcheck_history       6  문서
+   ...
+   media_thumbnails/                   12  파일 (8.4 MB)
+```
+
+### 2) 확인 후 실제 실행
+
+```bash
+node scripts/reset-v5.mjs --key ./serviceAccount.json --confirm --with-files
+```
+
+`--confirm`이 붙으면 **백업 → 삭제** 순서로 진행됩니다. 백업이 실패하면 삭제는 시작되지 않습니다.
+
+```
+backups/reset-v5-<타임스탬프>/
+├─ manifest.json                     # 프로젝트·보존 현황·대상 요약
+├─ firestore/
+│  ├─ media_items.json               # 하위 서브컬렉션까지 트리로 포함
+│  ├─ users__<uid>__factcheck_history.json
+│  └─ ...
+└─ storage/
+   ├─ media_thumbnails.json          # 파일 목록·크기·타입
+   └─ files/                         # --with-files 일 때만 원본 이미지
+```
+
+### 옵션
+
+| 옵션 | 설명 |
+|---|---|
+| `--key <path>` | 서비스 계정 JSON (또는 `GOOGLE_APPLICATION_CREDENTIALS`) |
+| `--bucket <name>` | Storage 버킷 (기본: `<projectId>.firebasestorage.app` 추정) |
+| `--dry-run` | 건수만 출력 **(기본값)** |
+| `--confirm` | 백업 후 실제 삭제 |
+| `--out <dir>` | 백업 폴더 (기본 `./backups/reset-v5-<타임스탬프>`) |
+| `--with-files` | Storage 이미지 원본까지 내려받아 백업 |
+| `--skip-storage` | Firestore만 처리 |
+
+### ⚠️ 주의사항
+
+- **`--with-files` 없이 실행하면 이미지 원본은 복구할 수 없습니다.** 목록(JSON)만 남습니다.
+  학생들이 올린 사진을 보관해야 한다면 반드시 붙이세요.
+- **되돌리기(restore) 기능은 없습니다.** 백업 JSON은 사람이 읽고 필요한 부분을 수동 복원하는
+  용도입니다. 실행 전에 Firebase 콘솔에서 별도 내보내기를 해두면 더 안전합니다.
+- 백업 폴더에는 **학생 평가 데이터가 그대로** 들어갑니다. `.gitignore`에 `backups/`를 등록해
+  두었지만, 외부 공유·클라우드 동기화 폴더에 두지 않도록 주의하세요.
+- 스크립트는 `PROTECTED_COLLECTIONS`(`checklists`, `members`, `config`, `users`, `groups`)가
+  삭제 목록에 섞이면 **실행을 중단**합니다. 대상을 늘리려면 `ROOT_COLLECTIONS` /
+  `USER_SUBCOLLECTIONS` / `GROUP_SUBCOLLECTIONS` 상수만 수정하세요.
+- Firestore 문서 삭제는 서브컬렉션을 지우지 않으므로 `recursiveDelete`를 사용합니다.
+  `media_items/{id}`만 지우면 `teacher_evaluation`·`student_evaluations`가 고아로 남습니다.
+- 실행 순서 권장: **초기화 → 보안 규칙 배포 → 교사 자료 재등록.**
+  초기화로 `media_items`가 비므로 v4.0 레거시 백필(위 마이그레이션 절)은 불필요해집니다.
 
 ---
 
@@ -698,8 +1053,10 @@ groups/{groupId}                                             // 모둠 협업 �
 
 ### 레거시 차원 → V1~V6 변환
 
-이전 버전(HPFM v1.0의 D1~D8, IPFM v2.0의 C1~C6)으로 저장된 점수는 다음 표로 V1~V6에
-매핑되어 자동 표시·집계됩니다 (`migrateLegacyDimensionScores`, `LEGACY_TO_NEW`).
+이전 버전(HPFM v1.0의 D1~D8, IPFM v2.0의 C1~C6)으로 저장된 점수와 체크리스트 항목의 옛
+dimension 코드는 다음 표로 V1~V6에 매핑되어 표시·집계됩니다
+(`migrateLegacyDimensionScores`, `LEGACY_TO_NEW`). v5.0에서도 **v4.0 이전 기록의 읽기 전용
+표시**와 **지표별 평균 산출**에 계속 쓰입니다.
 
 | 레거시 | 새 검증 행동 |
 |---|---|
@@ -720,40 +1077,64 @@ groups/{groupId}                                             // 모둠 협업 �
 mediadatacheck/
 ├─ index.html
 ├─ netlify.toml
-├─ firestore.rules                     # ⑤장에서 배포해야 적용됨
-├─ storage.rules                       # ⑤장에서 배포해야 적용됨
-├─ netlify/functions/gemini.js         # Gemini 프록시 (map + evaluate)
+├─ firestore.rules                     # ⑤장에서 배포해야 적용됨 (v5.0에서 크게 변경)
+├─ storage.rules                       # ⑤장에서 배포해야 적용됨 (v5.0에서 변경 없음)
+├─ ALGORITHM.md                        # 학생용 알고리즘 안내서(v5.0 + 부록에 v4.0 보존)
+├─ scripts/reset-v5.mjs                # 관리자용 평가 데이터 초기화(체크리스트 보존)
+├─ netlify/functions/gemini.js         # Gemini 프록시 (map + evaluate=항목별 채점)
 └─ src/
    ├─ main.jsx, App.jsx
    ├─ firebase.js                      # Firebase 초기화(Auth/Firestore/Storage)
    ├─ constants/
-   │   └─ model.js                     # ★ 모델 버전 상수 단일 출처
+   │   ├─ model.js                     # ★ 모델 버전 상수 단일 출처
+   │   └─ lesson.js                    # 수업 단계·원인 유형·성찰 문항 상수
    ├─ contexts/                        # AuthContext, WorkspaceContext(개인/모둠 전환)
-   ├─ services/                        # auth, firestore, storage, gemini, groups
+   ├─ services/                        # auth, firestore, storage, gemini, groups,
+   │                                   #   lesson(수업 데이터), lessonAi(4단계 AI 실행)
    ├─ utils/
-   │   ├─ hpfm.js                      # VAPM 코어(집계·보정값 산출·50점 환산·등급/과락·마스터리·마이그레이션)
-   │   ├─ mappingCache.js              # 검증 행동 매핑 캐시
+   │   ├─ hpfm.js                      # VAPM 코어(항목 채점 집계·백분율·등급/과락·지표 평균·레거시 매핑)
+   │   ├─ lessonGates.js               # ★ 순차 게이트 판정(순수 함수, 단위 테스트 대상)
+   │   ├─ lessonStats.js               # ★ 비교 대시보드 통계(순수 함수, 단위 테스트 대상)
+   │   ├─ mappingCache.js              # 검증 행동 매핑 캐시(표시용 라벨)
    │   ├─ dataCache.js                 # 세션 read-through 캐시(무료 쿼터 보호)
    │   └─ teacherCode.js               # 교사 인증 코드 salt+SHA-256 해싱(소프트 게이트)
-   ├─ components/                      # Button, Layout, Loading/*
+   ├─ components/                      # Button, Layout, MediaForm, LessonShell, Mascot, Loading/*
    └─ pages/
        ├─ LoginPage.jsx, TeacherCodePage.jsx
-       ├─ teacher/                     # Dashboard, MediaUpload, Evaluation
-       └─ student/                     # Dashboard, Checklist, Modeling, FactCheck, Result, JoinGroup
+       ├─ teacher/                     # Dashboard, MediaUpload, Progress(현황판), ClassStats(학급 집계)
+       └─ student/                     # Dashboard, Checklist, GroupMediaUpload,
+                                       #   FactCheck, Result, JoinGroup,
+                                       #   Stage1Assign · Stage2Media · Stage3Blind
+                                       #   · Stage4Reveal · Stage4Dashboard
 ```
 
-> `src/utils/hpfm.js`는 v1(HPFM)→v2(IPFM)→v3(VAPM)→v4(VAPM 보정) 진화 호환을 위해 파일명만
-> 유지하며, 내부 모델은 VAPM-4.0입니다.
+> `src/utils/hpfm.js`는 v1(HPFM)→v2(IPFM)→v3(VAPM)→v4(보정)→v5(체크리스트 채점) 진화
+> 호환을 위해 파일명만 유지하며, 내부 모델은 VAPM-5.0입니다.
+>
+> **v5.0에서 삭제된 파일:** `src/pages/student/ModelingPage.jsx`(기준 다듬기),
+> `src/pages/teacher/TeacherEvaluation.jsx`(교사 정답지 평가).
+> **추가된 파일:** `src/components/MediaForm.jsx`(등록 폼 공용화),
+> `src/pages/student/GroupMediaUpload.jsx`(조장 전용 모둠 자료 등록).
 
 ---
 
 ## 🎓 교육적 의의
 
-VAPM v4.0은 단순 자동 채점기가 아니라, **학생이 자신의 검증 습관을 숫자로 보고, 교사라는
-기준점과의 평균 차이로 그 습관을 스스로 교정하는 메타인지 도구**입니다.
+VAPM v5.0은 자동 채점기가 아니라, **학생이 스스로 만든 평가 도구가 실제로 작동하는 것을 보고,
+AI의 판단을 자기 판단과 견주어 검토하게 하는 도구**입니다.
 
-- **5대 검증 행동** — 추상적 점수가 아닌, 학생이 실제로 수행하는 구체적 행동 단위.
-- **채점자 보정(calibration)** — "교사 vs 나"의 평균 채점 차이를 보정값으로 삼아 AI 점수를 교사 기준에 정박.
-- **설명 가능성** — "AI 점수 + 교사와의 평균 차이"라는 한 줄 논리. 교육측정의 moderation 절차와 동일.
-- **등급 + 과락 이중 기준** — 총점 등급과 별개로 개별 항목이 심각히 미흡하면 경고해 평균이 결함을 가리지 않게.
-- **마스터리·피드백** — 약점 검증 행동을 집중적으로 보완하도록 유도.
+- **평가 도구를 만드는 것이 곧 학습** — 배워야 할 것은 "이 기사가 몇 점인가"가 아니라
+  "미디어를 볼 때 무엇을 물어야 하는가"입니다. 체크리스트가 점수의 **유일한** 근거이므로,
+  도구가 허술하면 결과도 허술하게 나오고 학생은 그걸 보고 도구를 고칩니다.
+- **검산 가능한 투명성** — 총점은 항목 점수의 단순 합계입니다. 학생이 손으로 검산할 수 있고,
+  검산할 수 있어야 의심할 수도 있습니다.
+- **AI를 권위가 아니라 동료 평가자로** — 보정 없이 AI 판단을 그대로 보여줍니다. 동의가 안 되는
+  점수는 오류가 아니라 **토론할 거리**이고, 그 토론이 이 수업의 핵심 활동입니다.
+- **한계의 명시적 노출** — AI가 출처 정보를 검증하지 못한다는 사실과 N/A 항목의 사유를 항상
+  화면에 남깁니다. 숨기면 학생이 AI가 하지도 않은 검증을 했다고 착각하게 됩니다.
+- **정답지 없는 평가** — 미디어 평가에는 유일한 정답이 없습니다. 교사 채점을 정답지로 삼으면
+  학생은 판단하는 법이 아니라 교사의 답을 맞히는 법을 배우게 되므로, 그 경로를 제거했습니다.
+- **등급 + 과락 이중 기준** — 백분율 등급과 별개로 개별 항목이 2점 미만이면 경고해,
+  합계가 결함을 가리지 않게 합니다. (v4.0에서 계승)
+
+> 수업 활동 아이디어는 [ALGORITHM.md §12](./ALGORITHM.md#12-학습-활동-아이디어-선생님과-함께)를 참고하세요.

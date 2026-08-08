@@ -24,8 +24,13 @@ async function uploadImage(file, uid, basePath, label) {
   return await getDownloadURL(ref);
 }
 
-export function uploadThumbnail(file, teacherUid) {
-  return uploadImage(file, teacherUid, "media_thumbnails", "uploadThumbnail");
+/**
+ * 미디어 자료 이미지 업로드 (교사 자료 · 모둠 자료 공통).
+ * 경로는 storage.rules와 맞추기 위해 기존 `media_thumbnails/{uid}/`를 그대로 쓴다.
+ * (규칙이 "본인 uid 경로에만 쓰기"라 조장이 올려도 그대로 통과한다.)
+ */
+export function uploadMediaImage(file, uid) {
+  return uploadImage(file, uid, "media_thumbnails", "uploadMediaImage");
 }
 
 export function uploadFactCheckImage(file, studentUid) {
